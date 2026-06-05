@@ -2,9 +2,11 @@
 
 [Chrome Web Store Extension Link - Coming Soon]
 
-PRScope is an intelligent, developer-first Chrome Extension designed to automate and augment the GitHub Pull Request review process. Operating as a stateless client injected directly into the GitHub DOM, PRScope interfaces with a highly concurrent FastAPI backend to perform deterministic risk analysis, causal dependency mapping, and comprehensive security auditing on incoming pull requests.
+**Autonomous AI Senior Engineer for GitHub.**
 
-Built for high-velocity engineering teams, PRScope significantly reduces the cognitive overhead required to review massive legacy refactors, complex dependency chains, and subtle architectural anti-patterns.
+PRScope is a full-stack Chrome Extension and FastAPI platform that performs instant, comprehensive pull request reviews natively within the GitHub UI. It acts as an autonomous agent that deeply analyzes structural code changes, catches zero-day vulnerabilities, maps downstream dependency impacts, and generates actionable, 1-click inline code comments using advanced LLM reasoning.
+
+Built for high-velocity engineering teams, PRScope significantly reduces the cognitive overhead required to review massive legacy refactors, complex dependency chains, and subtle architectural anti-patterns. Stop blindly merging code and gain deterministic x-ray vision into every pull request.
 
 ## Core Capabilities
 
