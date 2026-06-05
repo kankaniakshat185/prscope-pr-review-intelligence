@@ -1,37 +1,125 @@
-# PRScope - GitHub PR Intelligence Platform
+# PRScope
 
-PRScope is a Chrome Extension that injects a right-hand sidebar into GitHub Pull Request pages. It provides a deterministic risk engine, dependency impact analysis, architecture validation, incident similarity check, and Gemini-based review checklists and suggested comments.
+[Chrome Web Store Extension Link - Coming Soon]
 
-## Tech Stack
-- **Frontend**: Next.js 15, Tailwind CSS, shadcn/ui
-- **Backend**: FastAPI, PostgreSQL, ChromaDB, Gemini 2.5 Flash
+PRScope is an intelligent, developer-first Chrome Extension designed to automate and augment the GitHub Pull Request review process. Operating as a stateless client injected directly into the GitHub DOM, PRScope interfaces with a highly concurrent FastAPI backend to perform deterministic risk analysis, causal dependency mapping, and comprehensive security auditing on incoming pull requests.
 
-## How to use
+Built for high-velocity engineering teams, PRScope significantly reduces the cognitive overhead required to review massive legacy refactors, complex dependency chains, and subtle architectural anti-patterns.
 
-### 1. Start the Backend
-Navigate to the `backend` directory and install the requirements:
+## Core Capabilities
+
+### Deterministic Risk Assessment
+Generates a quantifiable Risk Score (1-10) and a Reviewability Index based on rigid heuristics rather than stochastic LLM generation. Evaluates factors such as Line of Code (LOC) volatility, symbol modification density, test coverage deltas, and PR description fidelity to triage the risk of a merge.
+
+### Automated Security & Architecture Auditing
+Detects common exploitation vectors and architectural abstraction leaks. It systematically flags structural code violations against established design patterns (e.g., SOLID, DRY) and highlights potential zero-day entry points introduced in the diff.
+
+### Causal Dependency Mapping
+Constructs an abstract syntax tree representation of the modifications to map upstream service dependencies and downstream module impacts. Identifies exactly which components of the codebase are at risk of cascading failure due to the proposed changes.
+
+### Stateful Review Generation
+Cross-references the pull request diff against provided Jira/Linear ticket context to ensure strict adherence to business requirements. Generates highly contextual, actionable inline comments that can be directly submitted to the GitHub timeline via the extension UI.
+
+### Bring Your Own Key (BYOK) Architecture
+Engineered with a primary focus on data sovereignty. Users can bypass the public API quota pool by locally persisting their own Gemini API keys via secure browser storage, enabling unlimited, unrestricted model inference.
+
+## System Architecture
+
+The platform follows a decoupled client-server model, ensuring the Chrome Extension remains lightweight while offloading heavy LLM inference, embedding generation, and vector storage to a distributed backend.
+
+```mermaid
+graph TD
+    subgraph Client [Chrome Browser]
+        UI[Next.js React UI]
+        CS[Content Scripts]
+        BS[Background Service Worker]
+        Storage[(Local Storage)]
+    end
+
+    subgraph Backend [FastAPI Application Layer]
+        API[API Router]
+        Auth[OAuth Provider]
+        Risk[Risk & Telemetry Engine]
+        LLM[LLM Service Abstraction]
+    end
+
+    subgraph Infrastructure [Data & Inference]
+        PG[(Neon PostgreSQL)]
+        Chroma[(ChromaDB Vector Store)]
+        Gemini[Google Gemini API]
+    end
+
+    UI <-->|DOM Injection| CS
+    CS <-->|Messaging| BS
+    BS <-->|HTTPS REST| API
+    Storage -.->|BYOK Key| BS
+
+    API --> Auth
+    Auth --> PG
+    API --> Risk
+    API --> LLM
+
+    LLM --> Chroma
+    LLM --> Gemini
+```
+
+## Local Development Initialization
+
+To run the application locally for contribution or self-hosting, follow the steps below.
+
+### Prerequisites
+- Python 3.10+
+- Node.js 18+
+- PostgreSQL instance (or SQLite for testing)
+- Google Gemini API Key
+- GitHub OAuth Application Credentials
+
+### Backend Setup
+
+1. Navigate to the backend directory and establish a virtual environment:
 ```bash
 cd backend
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+2. Install dependencies:
+```bash
 pip install -r requirements.txt
 ```
 
-Run the FastAPI server:
-```bash
-uvicorn app.main:app --reload
+3. Configure environment variables in `backend/.env`:
+```env
+DATABASE_URL=postgresql://user:password@localhost:5432/prscope
+GEMINI_API_KEY=your_gemini_api_key
+GITHUB_CLIENT_ID=your_oauth_client_id
+GITHUB_CLIENT_SECRET=your_oauth_client_secret
+JWT_SECRET=secure_jwt_signing_key
 ```
-The server will run on `http://localhost:8000`. Ensure PostgreSQL is running. (Database connection string is in `backend/.env`).
 
-### 2. Load the Chrome Extension
-The extension has already been built into the `extension/out` directory.
+4. Initialize the server:
+```bash
+uvicorn app.main:app --reload --port 8000
+```
 
-1. Open Google Chrome.
-2. Navigate to `chrome://extensions/`.
-3. Enable **Developer mode** in the top right corner.
-4. Click **Load unpacked**.
-5. Select the `extension/out` directory in your file browser.
+### Extension Setup
 
-### 3. Test on GitHub
-Navigate to any GitHub Pull Request page.
-The extension will inject a sidebar on the right side with the PR analysis.
+1. Navigate to the extension directory:
+```bash
+cd extension
+npm install
+```
 
-*Note: Since the backend currently uses Gemini, be sure to set `GEMINI_API_KEY` in `backend/.env` for LLM features to work.*
+2. Execute the build process:
+```bash
+npm run build
+```
+
+3. Load into Chrome:
+- Navigate to `chrome://extensions/`
+- Enable "Developer mode"
+- Select "Load unpacked"
+- Target the `extension/out` directory generated by the build process.
+
+## License
+MIT License. See `LICENSE` for more information.
