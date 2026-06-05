@@ -85,17 +85,56 @@ Only generate a comment if:
 Never invent try-except recommendations, security vulnerabilities, or missing tests unless supported by modified code.
 If confidence is low or no issues exist, return an empty list [].
 
-Output as a JSON list of objects with 'file', 'issue', 'suggestion', 'reasoning', 'confidence' (0-100).
+Output as a JSON list of objects with 'file', 'issue', 'suggestion', 'reasoning', 'confidence' (0-100), and 'severity' ("Critical", "Warning", or "Suggestion").
+
+Example:
+[{{
+    "file": "path/to/file.py",
+    "issue": "Missing error handling",
+    "reasoning": "Database call lacks try-except",
+    "suggestion": "Wrap in try-except and log error",
+    "confidence": 92,
+    "severity": "Warning"
+}}]
 """
     res = generate_content(prompt)
     parsed = parse_json_response(res)
     comments = []
     if isinstance(parsed, list):
         for c in parsed:
-            if isinstance(c, dict) and c.get('confidence', 0) > 70:
+            if isinstance(c, dict) and c.get('confidence', 0) >= 70:
                 comments.append(c)
-        return comments[:5]
+        return sorted(comments, key=lambda x: x.get('confidence', 0), reverse=True)[:5]
     return []
+
+def explain_security_finding(finding: dict) -> dict:
+    prompt = f"""
+Explain the following security finding deterministically discovered by the security engine.
+DO NOT detect vulnerabilities. Only EXPLAIN what was found.
+
+Finding: {finding.get('name')}
+Severity: {finding.get('severity')}
+Code Snippet:
+```
+{finding.get('snippet')}
+```
+Reason: {finding.get('reason')}
+
+Return JSON with:
+"explanation": "Clear explanation of the risk.",
+"recommendation": "How to fix it safely.",
+"impact_summary": "What happens if exploited."
+"""
+    res = generate_content(prompt)
+    parsed = parse_json_response(res)
+    if isinstance(parsed, dict):
+        return {
+            **finding,
+            "ai_explanation": parsed.get("explanation"),
+            "ai_recommendation": parsed.get("recommendation", finding.get("recommendation")),
+            "ai_impact_summary": parsed.get("impact_summary")
+        }
+    return finding
 
 def generate_executive_summary(context: Dict[str, Any]) -> str:
     base_prompt = build_base_prompt(context)
