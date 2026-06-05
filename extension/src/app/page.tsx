@@ -958,14 +958,24 @@ function MainDashboard() {
                 </div>
               </div>
               <div className="flex gap-2">
-                <select className={`${inputStyle} flex-1 h-9`} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                <select 
+                  className={`${inputStyle} flex-1 h-9 appearance-none bg-no-repeat pr-8`} 
+                  style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundPosition: "calc(100% - 12px) center" }}
+                  value={filterStatus} 
+                  onChange={e => setFilterStatus(e.target.value)}
+                >
                   <option value="All">All Statuses</option>
                   <option value="IN_PROGRESS">In Progress</option>
                   <option value="APPROVED">Approved</option>
                   <option value="NEEDS_CHANGES">Needs Changes</option>
                   <option value="FOLLOW_UP_REQUIRED">Follow Up Required</option>
                 </select>
-                <select className={`${inputStyle} flex-1 h-9`} value={sortOrder} onChange={e => setSortOrder(e.target.value)}>
+                <select 
+                  className={`${inputStyle} flex-1 h-9 appearance-none bg-no-repeat pr-8`} 
+                  style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundPosition: "calc(100% - 12px) center" }}
+                  value={sortOrder} 
+                  onChange={e => setSortOrder(e.target.value)}
+                >
                   <option value="newest">Most Recent</option>
                   <option value="oldest">Oldest</option>
                   <option value="highest_risk">Highest Risk</option>

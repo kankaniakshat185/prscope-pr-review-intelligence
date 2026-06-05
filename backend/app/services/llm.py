@@ -173,7 +173,21 @@ Format EXACTLY like this:
     res = generate_content(prompt, api_key)
     if res:
         return res
-    return "### Purpose\nMinor updates.\n\n### Risk\nLow.\n\n### Impact\nMinimal.\n\n### Recommendation\nApprove."
+    return """### Purpose
+Minor updates.
+
+### Risk
+Low.
+
+### Impact
+Minimal.
+
+### Recommendation
+Approve.
+
+> [!WARNING]
+> **API Quota Exceeded or Invalid Key**
+> This is a deterministic fallback summary. Please add your own Gemini API Key in the **Settings (⚙️)** or wait for the daily quota to refresh to receive full AI-powered intelligence."""
 
 def extract_jira_context(pr_data: Dict[str, Any], api_key: str = None) -> Dict[str, Any]:
     text = f"{pr_data.get('title', '')} {pr_data.get('description', '')}"
