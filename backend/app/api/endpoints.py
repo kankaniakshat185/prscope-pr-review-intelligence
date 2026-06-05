@@ -68,7 +68,7 @@ async def github_callback(code: str, db: Session = Depends(get_db)):
             access_token = token_data.get("access_token")
             
             if not access_token:
-                raise HTTPException(status_code=400, detail="Failed to get access token from GitHub")
+                raise HTTPException(status_code=400, detail=f"Failed to get access token from GitHub: {token_data}")
                 
             # 2. Fetch user profile
             user_res = await client.get(
