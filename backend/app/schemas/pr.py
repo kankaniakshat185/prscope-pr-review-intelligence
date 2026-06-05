@@ -17,6 +17,7 @@ class PRAnalysisResponse(BaseModel):
     executive_summary: str
     changed_symbols: Dict[str, List[str]]
     security_findings: List[Dict[str, Any]] = []
+    pr_type: Optional[str] = None
 
 class ReviewNoteBase(BaseModel):
     repo_url: str

@@ -119,7 +119,8 @@ async def analyze_pr(request: PRAnalysisRequest):
             jira_context=jira_context,
             executive_summary=exec_summary,
             changed_symbols=symbols,
-            security_findings=security_findings
+            security_findings=security_findings,
+            pr_type=pr_context.get('pr_type')
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { AlertCircle, CheckCircle, Search, GitPullRequest, GitMerge, ShieldAlert, Cpu, Layout, Code2, ClipboardCopy, History, Save, Send, Link as LinkIcon, Network, Github } from "lucide-react";
+import { AlertCircle, CheckCircle, GitMerge, ShieldAlert, Cpu, Layout, Code2, ClipboardCopy, History, Save, GitPullRequest, Search, Send, Link as LinkIcon, Network } from "lucide-react";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -209,7 +209,7 @@ function MainDashboard() {
           <p className="text-sm text-[#8b949e] mt-2">Open a Pull Request on GitHub to see analysis.</p>
           {!token && (
             <button onClick={loginWithGitHub} className="mt-4 bg-[#1f7530] text-white px-4 py-2 rounded-md text-sm font-medium border border-[rgba(240,246,252,0.1)] hover:bg-[#1a6825] flex items-center gap-2 mx-auto">
-              <Github className="h-4 w-4" /> Login with GitHub
+              Login with GitHub
             </button>
           )}
         </div>
@@ -224,7 +224,7 @@ function MainDashboard() {
   const primaryButtonStyle = "bg-[#1f7530] border border-[rgba(240,246,252,0.1)] text-white hover:bg-[#1a6825] transition-colors rounded-md text-sm font-medium py-1.5 px-3";
   const textPrimary = "text-[#c9d1d9]";
   const textSecondary = "text-[#8b949e]";
-  const inputStyle = "bg-[#0d1117] border border-[#30363d] rounded-md p-2 text-sm text-[#c9d1d9] outline-none focus:border-[#58a6ff] focus:ring-1 focus:ring-[#58a6ff]";
+  const inputStyle = "bg-[#0d1117] border border-[#30363d] rounded-md p-2 text-sm text-[#c9d1d9] outline-none focus:border-[#8b949e] focus:ring-1 focus:ring-[#8b949e]";
   const containerFont = { fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'" };
 
   return (
@@ -249,13 +249,13 @@ function MainDashboard() {
       <div className="flex gap-2 mb-4">
         <button 
           onClick={() => setActiveTab("PR_REVIEW")}
-          className={`flex-1 py-1.5 text-sm font-medium rounded-md border transition-colors ${activeTab === "PR_REVIEW" ? "bg-[#1f6feb]/10 text-[#58a6ff] border-[#1f6feb]/30" : "bg-transparent text-[#8b949e] border-transparent hover:bg-[#21262d]"}`}
+          className={`flex-1 py-1.5 text-sm font-medium rounded-md border transition-colors ${activeTab === "PR_REVIEW" ? "bg-[#21262d] text-[#c9d1d9] border-[#8b949e]" : "bg-transparent text-[#8b949e] border-transparent hover:bg-[#21262d]"}`}
         >
           PR Review
         </button>
         <button 
           onClick={() => setActiveTab("SAVED_REVIEWS")}
-          className={`flex-1 py-1.5 text-sm font-medium rounded-md border transition-colors ${activeTab === "SAVED_REVIEWS" ? "bg-[#1f6feb]/10 text-[#58a6ff] border-[#1f6feb]/30" : "bg-transparent text-[#8b949e] border-transparent hover:bg-[#21262d]"}`}
+          className={`flex-1 py-1.5 text-sm font-medium rounded-md border transition-colors ${activeTab === "SAVED_REVIEWS" ? "bg-[#21262d] text-[#c9d1d9] border-[#8b949e]" : "bg-transparent text-[#8b949e] border-transparent hover:bg-[#21262d]"}`}
         >
           Saved Reviews
         </button>
@@ -265,7 +265,7 @@ function MainDashboard() {
         <>
           {loading && (
             <div className="flex flex-col items-center justify-center py-20 space-y-4">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#58a6ff]"></div>
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#8b949e]"></div>
               <p className={`text-sm ${textSecondary} animate-pulse`}>Analyzing Pull Request Workspace...</p>
             </div>
           )}
@@ -280,11 +280,18 @@ function MainDashboard() {
 
           {data && !loading && (
             <div className="space-y-4">
-              <button onClick={copySnapshot} className={`w-full flex items-center justify-center gap-2 ${buttonStyle} py-2 mb-2`}>
-                <ClipboardCopy className="h-4 w-4" />
-                Copy Review Snapshot
-              </button>
-
+              <div className="flex items-center gap-2 mb-2">
+                <button onClick={copySnapshot} className={`flex-1 flex items-center justify-center gap-2 ${buttonStyle} py-2`}>
+                  <ClipboardCopy className="h-4 w-4" />
+                  Copy Review Snapshot
+                </button>
+                {data.pr_type && (
+                  <div className={`flex items-center justify-center px-4 py-2 bg-[#161b22] border border-[#30363d] rounded-md text-sm`}>
+                    <span className="text-[#8b949e] mr-1">Type:</span> 
+                    <span className="font-semibold text-[#c9d1d9]">{data.pr_type}</span>
+                  </div>
+                )}
+              </div>
               {/* 1. Risk Assessment */}
               <div className={boxStyle}>
                 <div className={`${headerStyle} flex items-center justify-between`}>
@@ -345,10 +352,16 @@ function MainDashboard() {
                     </div>
                   </AccordionTrigger>
                   <AccordionContent className="p-4 bg-[#0d1117] border-t border-[#30363d]">
-                    <div className="text-sm text-[#c9d1d9] leading-relaxed prose prose-invert prose-sm max-w-none 
-                                    prose-h3:block prose-h3:text-[16px] prose-h3:font-semibold prose-h3:mt-5 prose-h3:mb-2 prose-h3:text-[#c9d1d9] 
-                                    prose-p:block prose-p:my-2 prose-p:leading-6 prose-ul:my-2 prose-li:my-0.5">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    <div className="text-sm text-[#c9d1d9] leading-relaxed max-w-none break-words">
+                      <ReactMarkdown 
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          h3: ({node, ...props}) => <h3 className="text-base font-bold text-[#c9d1d9] mt-6 mb-2" {...props} />,
+                          p: ({node, ...props}) => <p className="my-2 leading-6 whitespace-pre-wrap break-words" {...props} />,
+                          ul: ({node, ...props}) => <ul className="list-disc pl-5 my-2 break-words" {...props} />,
+                          li: ({node, ...props}) => <li className="my-1 break-words" {...props} />
+                        }}
+                      >
                         {data.executive_summary}
                       </ReactMarkdown>
                     </div>
@@ -384,7 +397,7 @@ function MainDashboard() {
                             <div className="text-xs text-[#c9d1d9] mb-3">{finding.reason}</div>
                             {finding.ai_explanation && (
                               <div className="mt-3 p-3 bg-[#0d1117] border border-[#30363d] rounded-md text-xs space-y-2">
-                                <div><span className="font-semibold text-[#58a6ff]">AI Explanation:</span> {finding.ai_explanation}</div>
+                                <div><span className="font-semibold text-[#c9d1d9]">AI Explanation:</span> {finding.ai_explanation}</div>
                                 <div><span className="font-semibold text-[#3fb950]">Recommendation:</span> {finding.ai_recommendation}</div>
                                 <div><span className="font-semibold text-[#d29922]">Impact:</span> {finding.ai_impact_summary}</div>
                               </div>
@@ -407,14 +420,14 @@ function MainDashboard() {
                     </div>
                   </AccordionTrigger>
                   <AccordionContent className="p-4 bg-[#0d1117] border-t border-[#30363d]">
-                    <ul className={`space-y-2 text-sm ${textPrimary}`}>
+                    <div className="space-y-3">
                       {data.review_checklist && data.review_checklist.map((item: string, i: number) => (
-                        <li key={i} className="flex items-start gap-2">
-                          <div className="mt-1.5 h-1.5 w-1.5 rounded-full bg-[#58a6ff] flex-shrink-0" />
-                          <span className="leading-snug">{item}</span>
-                        </li>
+                        <div key={i} className="flex items-start gap-3 bg-[#161b22] border border-[#30363d] p-3 rounded-md shadow-sm break-words">
+                          <CheckCircle className="h-4 w-4 mt-0.5 text-[#3fb950] flex-shrink-0" />
+                          <span className={`text-sm ${textPrimary} leading-snug whitespace-pre-wrap`}>{item}</span>
+                        </div>
                       ))}
-                    </ul>
+                    </div>
                   </AccordionContent>
                 </AccordionItem>
 
@@ -436,7 +449,7 @@ function MainDashboard() {
                                 {comment.file}
                               </div>
                               <div className="flex items-center gap-2">
-                                <Badge variant="outline" className={`text-[10px] border-[#30363d] ${comment.severity === "Critical" ? "text-[#f85149]" : comment.severity === "Warning" ? "text-[#d29922]" : "text-[#58a6ff]"}`}>
+                                <Badge variant="outline" className={`text-[10px] border-[#30363d] ${comment.severity === "Critical" ? "text-[#f85149]" : comment.severity === "Warning" ? "text-[#d29922]" : "text-[#c9d1d9]"}`}>
                                   {comment.severity || "Suggestion"}
                                 </Badge>
                                 <Badge variant="outline" className="text-[10px] border-[#30363d] text-[#8b949e]">
@@ -444,9 +457,9 @@ function MainDashboard() {
                                 </Badge>
                               </div>
                             </div>
-                            <div className={`text-sm font-semibold ${textPrimary} mb-1 leading-snug`}>{comment.issue}</div>
-                            <div className={`text-xs ${textSecondary} mb-3 leading-relaxed`}>{comment.reasoning}</div>
-                            <div className="text-xs text-[#3fb950] bg-[#1f7530]/10 p-2.5 rounded-md mb-3 border border-[#1f7530]/20">
+                            <div className={`text-sm font-semibold ${textPrimary} mb-1 leading-snug break-words whitespace-pre-wrap`}>{comment.issue}</div>
+                            <div className={`text-xs ${textSecondary} mb-3 leading-relaxed break-words whitespace-pre-wrap`}>{comment.reasoning}</div>
+                            <div className="text-xs text-[#3fb950] bg-[#1f7530]/10 p-2.5 rounded-md mb-3 border border-[#1f7530]/20 break-words whitespace-pre-wrap">
                               <span className="font-semibold block mb-1">Suggestion:</span>
                               <span className="leading-relaxed">{comment.suggestion}</span>
                             </div>
@@ -484,14 +497,14 @@ function MainDashboard() {
                       
                       {data.impact_analysis?.dependency_graph?.modified_functions?.map((dep: any, i: number) => (
                         <div key={i} className="bg-[#161b22] border border-[#30363d] rounded-md p-3">
-                          <div className="text-sm font-mono font-semibold text-[#58a6ff] mb-2">{dep.function}</div>
+                          <div className="text-sm font-mono font-semibold text-[#c9d1d9] break-all mb-2">{dep.function}</div>
                           
                           <div className="grid grid-cols-2 gap-4">
                             <div>
                               <div className="text-[10px] text-[#8b949e] uppercase font-bold mb-1">Called By (Upstream)</div>
                               {dep.called_by?.length > 0 ? (
                                 <ul className="text-xs text-[#c9d1d9] space-y-1">
-                                  {dep.called_by.map((c: string, idx: number) => <li key={idx} className="flex gap-1"><LinkIcon className="h-3 w-3 mt-0.5 text-[#8b949e]" />{c}</li>)}
+                                  {dep.called_by.map((c: string, idx: number) => <li key={idx} className="flex gap-1 break-all"><LinkIcon className="h-3 w-3 mt-0.5 flex-shrink-0 text-[#8b949e]" /><span>{c}</span></li>)}
                                 </ul>
                               ) : <span className="text-xs text-[#8b949e]">None detected</span>}
                             </div>
@@ -499,7 +512,7 @@ function MainDashboard() {
                               <div className="text-[10px] text-[#8b949e] uppercase font-bold mb-1">Calls (Downstream)</div>
                               {dep.calls?.length > 0 ? (
                                 <ul className="text-xs text-[#c9d1d9] space-y-1">
-                                  {dep.calls.map((c: string, idx: number) => <li key={idx} className="flex gap-1"><LinkIcon className="h-3 w-3 mt-0.5 text-[#8b949e]" />{c}</li>)}
+                                  {dep.calls.map((c: string, idx: number) => <li key={idx} className="flex gap-1 break-all"><LinkIcon className="h-3 w-3 mt-0.5 flex-shrink-0 text-[#8b949e]" /><span>{c}</span></li>)}
                                 </ul>
                               ) : <span className="text-xs text-[#8b949e]">None detected</span>}
                             </div>
@@ -681,7 +694,7 @@ function MainDashboard() {
                 {savedReviews.map(r => (
                   <div key={r.id} onClick={() => fetchReviewDetails(r.id)} className={`${boxStyle} cursor-pointer hover:border-[#8b949e] transition-colors p-3 flex flex-col gap-2`}>
                     <div className="flex justify-between items-start">
-                      <div className="font-semibold text-sm text-[#58a6ff] hover:underline">
+                      <div className="font-semibold text-sm text-[#c9d1d9] hover:underline">
                         {r.repository} <span className="text-[#8b949e] font-normal">#{r.pr_number}</span>
                       </div>
                       <Badge variant="outline" className={`text-[10px] ${r.review_status === 'APPROVED' ? 'border-[#3fb950] text-[#3fb950]' : 'border-[#30363d] text-[#8b949e]'}`}>

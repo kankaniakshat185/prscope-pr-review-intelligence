@@ -58,24 +58,30 @@ function replaceInFiles(dir) {
 
         // Extract inline scripts for Chrome Extension MV3 compatibility
         if (ext === '.html') {
-          const scriptRegex = /<script>([\s\S]*?)<\/script>/g;
+          // Match any script that does NOT have a src attribute and does NOT have type="application/json"
+          const scriptRegex = /<script(?![^>]*src=)(?![^>]*type="application\/json")[^>]*>([\s\S]*?)<\/script>/g;
           let match;
           let scriptContent = '';
-          let scriptCounter = 0;
+          let newContent = content;
           
           while ((match = scriptRegex.exec(content)) !== null) {
             scriptContent += match[1] + '\n';
+            newContent = newContent.replace(match[0], ''); // safely remove exactly what we matched
           }
           
-          if (scriptContent) {
+          if (scriptContent.trim()) {
             const scriptName = `inline-script-${Date.now()}.js`;
-            fs.writeFileSync(path.join(dir, scriptName), scriptContent);
+            // Place it in the 'next' folder to keep things clean
+            const nextDirPath = path.join(outDir, 'next');
+            if (!fs.existsSync(nextDirPath)) fs.mkdirSync(nextDirPath, { recursive: true });
             
-            // Replace all inline scripts with a single external script reference
-            content = content.replace(scriptRegex, '');
+            fs.writeFileSync(path.join(nextDirPath, scriptName), scriptContent);
+            
             // Append the external script before </body>
-            content = content.replace('</body>', `<script src="./${scriptName}"></script></body>`);
+            newContent = newContent.replace('</body>', `<script src="/next/${scriptName}"></script></body>`);
           }
+          
+          content = newContent;
         }
 
         fs.writeFileSync(filePath, content);
@@ -85,4 +91,19 @@ function replaceInFiles(dir) {
 }
 
 replaceInFiles(outDir);
+
+// 4. Remove any invalid CSP from manifest.json
+const manifestPath = path.join(outDir, 'manifest.json');
+if (fs.existsSync(manifestPath)) {
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  
+  // MV3 completely forbids sha256 hashes in script-src for extension_pages
+  // We rely on the default CSP instead.
+  if (manifest.content_security_policy) {
+    delete manifest.content_security_policy;
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    console.log('Removed invalid CSP from manifest.json');
+  }
+}
+
 console.log('Successfully prepared out/ directory for Chrome Extension!');
