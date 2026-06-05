@@ -11,7 +11,7 @@ async def fetch_pr_data(repo_url: str, pr_number: int) -> Dict[str, Any]:
     
     headers = {
         "Accept": "application/vnd.github.v3+json",
-        "User-Agent": "PR-Copilot"
+        "User-Agent": "PRScope"
     }
     if settings.GITHUB_TOKEN:
         headers["Authorization"] = f"Bearer {settings.GITHUB_TOKEN}"

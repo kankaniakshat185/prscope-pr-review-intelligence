@@ -20,6 +20,17 @@ class PRAnalysisResult(Base):
     executive_summary = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+class ReviewNote(Base):
+    __tablename__ = "review_notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    repo_url = Column(String, index=True)
+    pr_number = Column(Integer, index=True)
+    status = Column(String, default="IN_PROGRESS")
+    notes = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 def init_db():
     try:
         Base.metadata.create_all(bind=engine)

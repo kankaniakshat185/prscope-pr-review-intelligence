@@ -2,13 +2,12 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { Separator } from "@/components/ui/separator";
-import { AlertCircle, CheckCircle, Search, GitPullRequest, GitMerge, ShieldAlert, Cpu, Activity, Layout, ActivityIcon } from "lucide-react";
-import ForceGraph2D from 'react-force-graph-2d';
+import { AlertCircle, CheckCircle, Search, GitPullRequest, GitMerge, ShieldAlert, Cpu, Activity, Layout, Code2, ClipboardCopy, History, Save, Send } from "lucide-react";
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 function MainDashboard() {
   const searchParams = useSearchParams();
@@ -19,10 +18,18 @@ function MainDashboard() {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
+  
+  const [noteStatus, setNoteStatus] = useState("IN_PROGRESS");
+  const [noteText, setNoteText] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [history, setHistory] = useState<any[]>([]);
+  const [postingComment, setPostingComment] = useState<string | null>(null);
 
   useEffect(() => {
     if (owner && repo && pr) {
       fetchAnalysis(owner, repo, pr);
+      fetchNote(owner, repo, pr);
+      fetchHistory(owner, repo);
     }
   }, [owner, repo, pr]);
 
@@ -39,10 +46,7 @@ function MainDashboard() {
         }),
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to fetch analysis");
-      }
-
+      if (!response.ok) throw new Error("Failed to fetch analysis");
       const result = await response.json();
       setData(result);
     } catch (err: any) {
@@ -52,235 +56,438 @@ function MainDashboard() {
     }
   };
 
+  const fetchNote = async (owner: string, repo: string, pr: string) => {
+    try {
+      const response = await fetch(`http://localhost:8000/api/analysis/note?repo_url=https://github.com/${owner}/${repo}&pr_number=${pr}`);
+      if (response.ok) {
+        const result = await response.json();
+        setNoteStatus(result.status || "IN_PROGRESS");
+        setNoteText(result.notes || "");
+      }
+    } catch (err) {
+      // Ignored if not found
+    }
+  };
+
+  const saveNote = async () => {
+    setNoteSaving(true);
+    try {
+      await fetch("http://localhost:8000/api/analysis/note", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repo_url: `https://github.com/${owner}/${repo}`,
+          pr_number: parseInt(pr as string, 10),
+          status: noteStatus,
+          notes: noteText
+        }),
+      });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setNoteSaving(false);
+    }
+  };
+
+  const fetchHistory = async (owner: string, repo: string) => {
+    try {
+      const response = await fetch(`http://localhost:8000/api/analysis/history?repo_url=https://github.com/${owner}/${repo}`);
+      if (response.ok) {
+        const result = await response.json();
+        setHistory(result);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const postCommentToGithub = async (comment: any, index: number) => {
+    setPostingComment(index.toString());
+    try {
+      const response = await fetch("http://localhost:8000/api/analysis/post-comment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repo_url: `https://github.com/${owner}/${repo}`,
+          pr_number: parseInt(pr as string, 10),
+          comment_body: `**PRScope Suggestion (${comment.file})**\n\n**Issue**: ${comment.issue}\n**Reasoning**: ${comment.reasoning}\n\n**Suggestion**: ${comment.suggestion}`
+        }),
+      });
+      if (response.ok) {
+        alert("Comment posted to GitHub!");
+      } else {
+        alert("Failed to post comment.");
+      }
+    } catch (err) {
+      alert("Error posting comment.");
+    } finally {
+      setPostingComment(null);
+    }
+  };
+
+  const copySnapshot = () => {
+    if (!data) return;
+    const md = `# PRScope Review\n\n**Repository**: ${owner}/${repo}\n**PR**: #${pr}\n**Risk**: ${data.risk_score.score}/10 (${data.risk_score.category})\n\n**Functions Modified**:\n${data.changed_symbols?.functions_modified?.map((f:string)=>`- ${f}`).join('\n') || 'None'}\n\n**Review Notes**:\n${noteText || 'None'}\n\n**Summary**:\n${data.executive_summary}`;
+    navigator.clipboard.writeText(md);
+    alert("Review Snapshot copied to clipboard!");
+  };
+
   if (!owner || !repo || !pr) {
     return (
-      <div className="flex h-screen items-center justify-center bg-zinc-950 text-zinc-200">
+      <div className="flex h-screen items-center justify-center bg-[#0d1117] text-[#c9d1d9]" style={{ fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'" }}>
         <div className="text-center p-6">
-          <ShieldAlert className="mx-auto h-12 w-12 text-zinc-500 mb-4" />
-          <h2 className="text-lg font-semibold">PR Copilot Active</h2>
-          <p className="text-sm text-zinc-400 mt-2">Open a Pull Request on GitHub to see analysis.</p>
+          <ShieldAlert className="mx-auto h-12 w-12 text-[#8b949e] mb-4" />
+          <h2 className="text-lg font-semibold">PRScope Active</h2>
+          <p className="text-sm text-[#8b949e] mt-2">Open a Pull Request on GitHub to see analysis.</p>
         </div>
       </div>
     );
   }
 
+  // Common GitHub Native Styles
+  const boxStyle = "bg-[#0d1117] border border-[#30363d] rounded-md overflow-hidden shadow-sm";
+  const headerStyle = "bg-[#161b22] px-4 py-3 m-0";
+  const buttonStyle = "bg-[#21262d] border border-[#363b42] text-[#c9d1d9] hover:bg-[#30363d] hover:border-[#8b949e] transition-colors rounded-md text-sm font-medium py-1.5 px-3";
+  const primaryButtonStyle = "bg-[#1f7530] border border-[rgba(240,246,252,0.1)] text-white hover:bg-[#1a6825] transition-colors rounded-md text-sm font-medium py-1.5 px-3";
+  const textPrimary = "text-[#c9d1d9]";
+  const textSecondary = "text-[#8b949e]";
+  const inputStyle = "bg-[#0d1117] border border-[#30363d] rounded-md p-2 text-sm text-[#c9d1d9] outline-none focus:border-[#58a6ff] focus:ring-1 focus:ring-[#58a6ff]";
+  const containerFont = { fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'" };
+
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-200 p-4 font-sans overflow-y-auto">
-      <div className="flex items-center gap-2 mb-6 border-b border-zinc-800 pb-4">
-        <GitMerge className="h-6 w-6 text-indigo-500" />
-        <h1 className="text-xl font-bold tracking-tight">PR Copilot</h1>
-        <Badge variant="outline" className="ml-auto bg-zinc-900 border-zinc-800 text-xs">
+    <div className="min-h-screen bg-[#0d1117] text-[#c9d1d9] p-4 overflow-y-auto" style={containerFont}>
+      <div className="flex items-center gap-2 mb-4 pb-4">
+        <GitMerge className="h-5 w-5 text-[#8b949e]" />
+        <h1 className="text-xl font-semibold tracking-tight text-[#c9d1d9]">PRScope</h1>
+        <Badge variant="outline" className="ml-auto bg-[#161b22] border-[#30363d] text-[#8b949e] text-xs font-normal">
           {owner}/{repo} #{pr}
         </Badge>
       </div>
 
       {loading && (
         <div className="flex flex-col items-center justify-center py-20 space-y-4">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
-          <p className="text-sm text-zinc-400 animate-pulse">Analyzing Pull Request...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#58a6ff]"></div>
+          <p className={`text-sm ${textSecondary} animate-pulse`}>Analyzing Pull Request...</p>
         </div>
       )}
 
       {error && (
-        <Card className="bg-red-950/20 border-red-900 mb-6">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-2 text-red-500">
-              <AlertCircle className="h-5 w-5" />
-              <p className="font-medium text-sm">{error}</p>
-            </div>
-            <button 
-              onClick={() => fetchAnalysis(owner, repo, pr)}
-              className="mt-4 px-3 py-1.5 bg-red-900/50 hover:bg-red-900/80 text-red-200 text-xs rounded transition-colors"
-            >
-              Retry
-            </button>
-          </CardContent>
-        </Card>
+        <div className="bg-[#ffebe9] border border-[#ff8182] text-[#24292f] p-4 rounded-md mb-6 flex items-center gap-2">
+          <AlertCircle className="h-5 w-5 text-[#cf222e]" />
+          <p className="font-medium text-sm">{error}</p>
+          <button onClick={() => fetchAnalysis(owner, repo, pr)} className="ml-auto underline">Retry</button>
+        </div>
       )}
 
       {data && !loading && (
-        <div className="space-y-6">
-          {/* Executive Summary */}
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-zinc-400 font-medium flex items-center gap-2">
-                <Layout className="h-4 w-4" />
-                Executive Summary
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-zinc-300 leading-relaxed">
-                {data.executive_summary}
-              </p>
-            </CardContent>
-          </Card>
+        <div className="space-y-4">
+          <button onClick={copySnapshot} className={`w-full flex items-center justify-center gap-2 ${buttonStyle} py-2 mb-2`}>
+            <ClipboardCopy className="h-4 w-4" />
+            Copy Review Snapshot
+          </button>
 
-          {/* Risk Assessment */}
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm text-zinc-400 font-medium flex items-center gap-2">
-                  <Activity className="h-4 w-4" />
-                  Risk Assessment
-                </CardTitle>
-                <Badge 
-                  variant="outline" 
-                  className={
-                    data.risk_score.category === "High Risk" ? "text-red-400 border-red-900 bg-red-950/30" : 
-                    data.risk_score.category === "Medium Risk" ? "text-amber-400 border-amber-900 bg-amber-950/30" : 
-                    "text-green-400 border-green-900 bg-green-950/30"
-                  }
-                >
-                  {data.risk_score.category}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-end gap-2 mb-4">
-                <span className="text-3xl font-bold text-zinc-100">{data.risk_score.score}</span>
-                <span className="text-sm text-zinc-500 mb-1">/ 10</span>
+          {/* Risk Assessment (Not an accordion, keeping as a top-level summary box) */}
+          <div className={boxStyle}>
+            <div className={`${headerStyle} flex items-center justify-between`}>
+              <h3 className={`text-sm font-semibold flex items-center gap-2 ${textPrimary} m-0`}>
+                <Activity className="h-4 w-4" />
+                Risk Assessment
+              </h3>
+              <Badge 
+                variant="outline" 
+                className={
+                  data.risk_score.category === "High Risk" ? "text-[#f85149] border-[#f85149] bg-transparent" : 
+                  data.risk_score.category === "Medium Risk" ? "text-[#d29922] border-[#d29922] bg-transparent" : 
+                  "text-[#3fb950] border-[#3fb950] bg-transparent"
+                }
+              >
+                {data.risk_score.category}
+              </Badge>
+            </div>
+            <div className="p-4 bg-[#0d1117]">
+              <div className="flex items-end gap-2 mb-3">
+                <span className="text-2xl font-semibold text-[#c9d1d9] leading-none">{data.risk_score.score}</span>
+                <span className={`text-sm ${textSecondary} leading-none mb-0.5`}>/ 10</span>
               </div>
               <Progress 
                 value={data.risk_score.score * 10} 
-                className={`h-2 mb-4 ${
-                  data.risk_score.category === "High Risk" ? "[&>div]:bg-red-500" : 
-                  data.risk_score.category === "Medium Risk" ? "[&>div]:bg-amber-500" : 
-                  "[&>div]:bg-green-500"
+                className={`h-1.5 mb-4 bg-[#21262d] ${
+                  data.risk_score.category === "High Risk" ? "[&>div]:bg-[#da3633]" : 
+                  data.risk_score.category === "Medium Risk" ? "[&>div]:bg-[#bf8700]" : 
+                  "[&>div]:bg-[#1f7530]"
                 }`}
               />
-              <div className="space-y-2 mt-4">
-                {data.risk_score.factor_breakdown.map((factor: any, i: number) => (
-                  <div key={i} className="flex justify-between text-xs">
-                    <span className="text-zinc-400">{factor.factor}</span>
-                    <span className="text-zinc-300 font-medium">{factor.value}</span>
+              <div className="space-y-2 mt-4 bg-[#161b22] p-3 rounded-md border border-[#30363d]">
+                <div className={`text-xs font-semibold ${textSecondary} mb-2 uppercase tracking-wide`}>Risk Breakdown</div>
+                {data.risk_score.factor_breakdown && data.risk_score.factor_breakdown.map((factor: any, i: number) => (
+                  <div key={i} className="text-xs mb-2 last:mb-0">
+                    <div className="flex justify-between font-medium text-[#c9d1d9]">
+                      <span>{factor.name}</span>
+                      <span className="text-[#d29922]">+{factor.weight}</span>
+                    </div>
+                    <div className={`${textSecondary} mt-0.5`}>{factor.reason}</div>
                   </div>
                 ))}
+                {(!data.risk_score.factor_breakdown || data.risk_score.factor_breakdown.length === 0) && (
+                  <div className={`text-xs ${textSecondary}`}>No high risk factors detected.</div>
+                )}
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
-          {/* Architecture Validation */}
-          {data.architecture_violations.length > 0 && (
-            <Card className="bg-zinc-900 border-amber-900/50">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-zinc-400 font-medium flex items-center gap-2">
-                  <ShieldAlert className="h-4 w-4 text-amber-500" />
-                  Architecture Violations
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {data.architecture_violations.map((v: any, i: number) => (
-                    <div key={i} className="bg-amber-950/20 border border-amber-900/30 rounded p-3 text-xs">
-                      <div className="font-mono text-amber-200/80 mb-1">{v.file}</div>
-                      <div className="font-semibold text-amber-500">{v.rule}</div>
-                      <div className="text-amber-200/60 mt-1">{v.explanation}</div>
-                    </div>
-                  ))}
+          {/* ALL OTHER SECTIONS AS COLLAPSIBLE ACCORDIONS */}
+          <Accordion type="single" collapsible className="w-full space-y-3" defaultValue="executive_summary">
+            
+            {/* Executive Summary */}
+            <AccordionItem value="executive_summary" className={boxStyle}>
+              <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
+                <div className="flex items-center gap-2 text-[#c9d1d9]">
+                  <Layout className="h-4 w-4" />
+                  Executive Summary
                 </div>
-              </CardContent>
-            </Card>
-          )}
+              </AccordionTrigger>
+              <AccordionContent className="p-4 bg-[#0d1117] border-t border-[#30363d]">
+                <div className="text-sm text-[#c9d1d9] leading-relaxed prose prose-invert prose-sm max-w-none 
+                                prose-h3:text-[16px] prose-h3:font-semibold prose-h3:mt-5 prose-h3:mb-2 prose-h3:text-[#c9d1d9] 
+                                prose-p:my-2 prose-p:leading-6 prose-ul:my-2 prose-li:my-0.5">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {data.executive_summary}
+                  </ReactMarkdown>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
 
-          <Accordion type="single" collapsible className="w-full space-y-4">
+            {/* Review Notes Workspace */}
+            <AccordionItem value="review_notes" className={boxStyle}>
+              <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
+                <div className="flex items-center gap-2 text-[#c9d1d9]">
+                  <Save className="h-4 w-4" />
+                  Review Notes
+                </div>
+              </AccordionTrigger>
+              <AccordionContent className="p-4 bg-[#0d1117] border-t border-[#30363d]">
+                <select 
+                  value={noteStatus}
+                  onChange={(e) => setNoteStatus(e.target.value)}
+                  className={`w-full mb-3 ${inputStyle}`}
+                >
+                  <option value="IN_PROGRESS">IN PROGRESS</option>
+                  <option value="FOLLOW_UP_REQUIRED">FOLLOW UP REQUIRED</option>
+                  <option value="NEEDS_CHANGES">NEEDS CHANGES</option>
+                  <option value="APPROVED">APPROVED</option>
+                </select>
+                <textarea
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  placeholder="Add review notes here..."
+                  className={`w-full h-24 mb-3 resize-y ${inputStyle}`}
+                  style={{ fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" }}
+                />
+                <button 
+                  onClick={saveNote}
+                  disabled={noteSaving}
+                  className={`w-full ${primaryButtonStyle} py-2`}
+                >
+                  {noteSaving ? "Saving..." : "Save Notes"}
+                </button>
+              </AccordionContent>
+            </AccordionItem>
+
+            {/* Changed Symbols Analysis */}
+            <AccordionItem value="symbols" className={boxStyle}>
+              <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
+                <div className="flex items-center gap-2 text-[#c9d1d9]">
+                  <Code2 className="h-4 w-4" />
+                  Changed Symbols
+                </div>
+              </AccordionTrigger>
+              <AccordionContent className="p-4 bg-[#0d1117] border-t border-[#30363d]">
+                <div className="space-y-4">
+                  {data.changed_symbols && data.changed_symbols.functions_modified.length > 0 && (
+                    <div>
+                      <div className={`text-xs font-semibold ${textSecondary} mb-2`}>Functions Modified:</div>
+                      <div className="flex flex-wrap gap-2">
+                        {data.changed_symbols.functions_modified.map((f:string, i:number) => (
+                          <span key={i} className="text-[12px] bg-[#161b22] border border-[#30363d] px-2 py-1 rounded-md text-[#c9d1d9] font-mono">{f}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {data.changed_symbols && data.changed_symbols.functions_added.length > 0 && (
+                    <div>
+                      <div className={`text-xs font-semibold ${textSecondary} mb-2`}>Functions Added:</div>
+                      <div className="flex flex-wrap gap-2">
+                        {data.changed_symbols.functions_added.map((f:string, i:number) => (
+                          <span key={i} className="text-[12px] bg-[#1f7530]/10 border border-[#1f7530]/30 px-2 py-1 rounded-md text-[#3fb950] font-mono">{f}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {data.changed_symbols && data.changed_symbols.classes_modified.length > 0 && (
+                    <div>
+                      <div className={`text-xs font-semibold ${textSecondary} mb-2`}>Classes Modified:</div>
+                      <div className="flex flex-wrap gap-2">
+                        {data.changed_symbols.classes_modified.map((f:string, i:number) => (
+                          <span key={i} className="text-[12px] bg-[#58a6ff]/10 border border-[#58a6ff]/30 px-2 py-1 rounded-md text-[#58a6ff] font-mono">{f}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {(!data.changed_symbols || (data.changed_symbols.functions_modified.length === 0 && data.changed_symbols.functions_added.length === 0 && data.changed_symbols.classes_modified.length === 0)) && (
+                    <div className={`text-xs ${textSecondary}`}>No significant symbols detected.</div>
+                  )}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
             
             {/* Review Checklist */}
-            <AccordionItem value="checklist" className="border border-zinc-800 rounded-lg bg-zinc-900 px-4">
-              <AccordionTrigger className="text-sm font-medium hover:no-underline py-4">
-                <div className="flex items-center gap-2 text-zinc-300">
+            <AccordionItem value="checklist" className={boxStyle}>
+              <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
+                <div className="flex items-center gap-2 text-[#c9d1d9]">
                   <CheckCircle className="h-4 w-4" />
                   Review Checklist
                 </div>
               </AccordionTrigger>
-              <AccordionContent className="pt-0 pb-4">
-                <ul className="space-y-2 text-sm text-zinc-400">
-                  {data.review_checklist.map((item: string, i: number) => (
+              <AccordionContent className="p-4 bg-[#0d1117] border-t border-[#30363d]">
+                <ul className={`space-y-2 text-sm ${textPrimary}`}>
+                  {data.review_checklist && data.review_checklist.map((item: string, i: number) => (
                     <li key={i} className="flex items-start gap-2">
-                      <div className="mt-1 h-1.5 w-1.5 rounded-full bg-indigo-500 flex-shrink-0" />
-                      <span>{item}</span>
+                      <div className="mt-1.5 h-1.5 w-1.5 rounded-full bg-[#58a6ff] flex-shrink-0" />
+                      <span className="leading-snug">{item}</span>
                     </li>
                   ))}
+                  {(!data.review_checklist || data.review_checklist.length === 0) && (
+                    <div className={`text-xs ${textSecondary}`}>No specific checklist items needed.</div>
+                  )}
                 </ul>
               </AccordionContent>
             </AccordionItem>
 
             {/* Suggested Comments */}
-            <AccordionItem value="comments" className="border border-zinc-800 rounded-lg bg-zinc-900 px-4">
-              <AccordionTrigger className="text-sm font-medium hover:no-underline py-4">
-                <div className="flex items-center gap-2 text-zinc-300">
+            <AccordionItem value="comments" className={boxStyle}>
+              <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
+                <div className="flex items-center gap-2 text-[#c9d1d9]">
                   <GitPullRequest className="h-4 w-4" />
                   Suggested Comments
                 </div>
               </AccordionTrigger>
-              <AccordionContent className="pt-0 pb-4">
-                <div className="space-y-3">
-                  {data.suggested_comments.map((comment: any, i: number) => (
-                    <div key={i} className="bg-zinc-950/50 rounded-md border border-zinc-800 p-3">
-                      <div className="text-xs font-mono text-indigo-400 mb-2 truncate" title={comment.file}>
-                        {comment.file}
+              <AccordionContent className="p-4 bg-[#0d1117] border-t border-[#30363d]">
+                {data.suggested_comments && data.suggested_comments.length > 0 ? (
+                  <div className="space-y-3">
+                    {data.suggested_comments.map((comment: any, i: number) => (
+                      <div key={i} className="bg-[#161b22] rounded-md border border-[#30363d] p-3">
+                        <div className="flex justify-between items-start mb-2">
+                          <div className={`text-xs font-mono text-[#8b949e] truncate max-w-[70%]`} title={comment.file}>
+                            {comment.file}
+                          </div>
+                          <Badge variant="outline" className="text-[10px] border-[#30363d] text-[#8b949e]">
+                            {comment.confidence}% Confidence
+                          </Badge>
+                        </div>
+                        <div className={`text-sm font-semibold ${textPrimary} mb-1 leading-snug`}>
+                          {comment.issue}
+                        </div>
+                        <div className={`text-xs ${textSecondary} mb-3 leading-relaxed`}>
+                          {comment.reasoning}
+                        </div>
+                        <div className="text-xs text-[#3fb950] bg-[#1f7530]/10 p-2.5 rounded-md mb-3 border border-[#1f7530]/20">
+                          <span className="font-semibold block mb-1">Suggestion:</span>
+                          <span className="leading-relaxed">{comment.suggestion}</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <button className={`flex-1 ${buttonStyle}`}>Copy</button>
+                          <button 
+                            onClick={() => postCommentToGithub(comment, i)}
+                            disabled={postingComment === i.toString()}
+                            className={`flex-1 flex items-center justify-center gap-1 ${primaryButtonStyle}`}
+                          >
+                            <Send className="h-3 w-3" />
+                            {postingComment === i.toString() ? "Posting..." : "Post to GitHub"}
+                          </button>
+                        </div>
                       </div>
-                      <div className="text-sm font-semibold text-zinc-200 mb-1">
-                        {comment.issue}
-                      </div>
-                      <div className="text-xs text-zinc-400 mb-2">
-                        {comment.reasoning}
-                      </div>
-                      <div className="text-xs text-green-400 bg-green-950/20 p-2 rounded">
-                        <span className="font-semibold block mb-1">Suggestion:</span>
-                        {comment.suggestion}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className={`text-xs ${textSecondary}`}>No high-confidence concerns found.</div>
+                )}
               </AccordionContent>
             </AccordionItem>
-
+            
             {/* Similar Incidents */}
-            {data.similar_incidents.length > 0 && (
-              <AccordionItem value="incidents" className="border border-zinc-800 rounded-lg bg-zinc-900 px-4">
-                <AccordionTrigger className="text-sm font-medium hover:no-underline py-4">
-                  <div className="flex items-center gap-2 text-zinc-300">
+            {data.similar_incidents && data.similar_incidents.length > 0 && (
+              <AccordionItem value="incidents" className={boxStyle}>
+                <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
+                  <div className="flex items-center gap-2 text-[#c9d1d9]">
                     <Search className="h-4 w-4" />
                     Similar Incidents
                   </div>
                 </AccordionTrigger>
-                <AccordionContent className="pt-0 pb-4">
+                <AccordionContent className="p-4 bg-[#0d1117] border-t border-[#30363d]">
                   <div className="space-y-3">
                     {data.similar_incidents.map((inc: any, i: number) => (
-                      <div key={i} className="border border-zinc-800 rounded p-3 text-xs bg-zinc-950/30">
+                      <div key={i} className="border border-[#30363d] rounded-md p-3 text-xs bg-[#161b22]">
                         <div className="flex items-center justify-between mb-2">
-                          <Badge variant="outline" className="border-indigo-900 text-indigo-400 bg-indigo-950/30">
+                          <Badge variant="outline" className="border-[#30363d] text-[#58a6ff]">
                             {inc.similarity_score}% Match
                           </Badge>
                         </div>
-                        <div className="text-zinc-300 mb-2">{inc.matching_incident}</div>
-                        <div className="text-zinc-500 italic">{inc.explanation}</div>
+                        <div className={`text-[#c9d1d9] mb-1.5 font-medium leading-snug`}>{inc.matching_incident}</div>
+                        <div className={`${textSecondary} leading-relaxed`}>{inc.explanation}</div>
                       </div>
                     ))}
                   </div>
                 </AccordionContent>
               </AccordionItem>
             )}
-            
-            {/* Impact Analysis Graph */}
-            <AccordionItem value="impact" className="border border-zinc-800 rounded-lg bg-zinc-900 px-4">
-              <AccordionTrigger className="text-sm font-medium hover:no-underline py-4">
-                <div className="flex items-center gap-2 text-zinc-300">
+
+            {/* Impact Graph */}
+            <AccordionItem value="impact" className={boxStyle}>
+              <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
+                <div className="flex items-center gap-2 text-[#c9d1d9]">
                   <Cpu className="h-4 w-4" />
                   Impact Graph
                 </div>
               </AccordionTrigger>
-              <AccordionContent className="pt-0 pb-4">
-                <div className="h-48 bg-zinc-950 rounded-md overflow-hidden relative border border-zinc-800">
-                  {/* Note: ForceGraph2D requires actual window dimensions, using static placeholder for demo extension to avoid iframe bugs or lazy load it */}
+              <AccordionContent className="p-4 bg-[#0d1117] border-t border-[#30363d]">
+                <div className="h-48 bg-[#0d1117] rounded-md overflow-hidden relative border border-[#30363d]">
                   <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
-                    <p className="text-xs text-zinc-400 mb-2">Impacted Services: {data.impact_analysis.affected_services.join(", ") || "None"}</p>
-                    <p className="text-xs text-zinc-400">Impacted Modules: {data.impact_analysis.affected_modules.join(", ") || "None"}</p>
+                    <p className={`text-xs ${textSecondary} mb-2`}>Impacted Services: {data.impact_analysis?.affected_services?.join(", ") || "None"}</p>
+                    <p className={`text-xs ${textSecondary}`}>Impacted Modules: {data.impact_analysis?.affected_modules?.join(", ") || "None"}</p>
                   </div>
                 </div>
               </AccordionContent>
             </AccordionItem>
 
+            {/* Analysis History */}
+            <AccordionItem value="history" className={boxStyle}>
+              <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
+                <div className="flex items-center gap-2 text-[#c9d1d9]">
+                  <History className="h-4 w-4" />
+                  Previous Analyses
+                </div>
+              </AccordionTrigger>
+              <AccordionContent className="p-4 bg-[#0d1117] border-t border-[#30363d]">
+                <div className="space-y-3">
+                  {history.map((h, i) => (
+                    <div key={i} className="text-xs border-l-2 border-[#30363d] pl-3 py-1">
+                      <div className="flex justify-between text-[#8b949e] mb-1.5">
+                        <span>PR #{h.pr_number}</span>
+                        <span>{new Date(h.created_at).toLocaleDateString()}</span>
+                      </div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-semibold text-[#c9d1d9]">Risk: {h.risk_score}</span>
+                        <span className="text-[#8b949e]">({h.risk_category})</span>
+                      </div>
+                      <div className={`text-[#8b949e] truncate`}>{h.executive_summary}</div>
+                    </div>
+                  ))}
+                  {history.length === 0 && (
+                    <div className={`text-xs ${textSecondary}`}>No previous analyses found.</div>
+                  )}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
           </Accordion>
         </div>
       )}
@@ -290,7 +497,7 @@ function MainDashboard() {
 
 export default function Page() {
   return (
-    <Suspense fallback={<div className="p-4 text-zinc-400 text-sm">Loading...</div>}>
+    <Suspense fallback={<div className="p-4 text-[#8b949e] text-sm font-sans">Loading...</div>}>
       <MainDashboard />
     </Suspense>
   );

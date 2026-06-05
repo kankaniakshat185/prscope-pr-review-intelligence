@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "PR Copilot Backend"
+    PROJECT_NAME: str = "PRScope Backend"
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/prcopilot"
     GITHUB_TOKEN: str = ""
     GEMINI_API_KEY: str = ""

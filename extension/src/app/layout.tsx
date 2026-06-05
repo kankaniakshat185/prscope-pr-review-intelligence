@@ -5,7 +5,7 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "PR Copilot",
+  title: "PRScope",
   description: "GitHub PR Intelligence Platform",
 };
 
@@ -16,7 +16,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={`${inter.className} bg-zinc-950 text-zinc-50 m-0 p-0 overflow-x-hidden`}>
+      <body className={`bg-[#0d1117] text-[#c9d1d9] m-0 p-0 overflow-x-hidden`} style={{ fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'" }}>
         {children}
       </body>
     </html>

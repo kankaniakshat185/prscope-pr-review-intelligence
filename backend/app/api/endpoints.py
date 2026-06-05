@@ -2,12 +2,17 @@ from fastapi import APIRouter, HTTPException
 from app.schemas.pr import PRAnalysisRequest, PRAnalysisResponse
 from app.services.github import fetch_pr_data
 from app.services.risk_engine import calculate_risk
+from app.services.context_builder import build_pr_context
+from app.services.llm import generate_review_checklist, generate_review_comments, generate_executive_summary, extract_jira_context
+from app.services.symbols_analysis import analyze_symbols
+from app.services.github_comments import post_review_comment
+from app.models.pr import SessionLocal, PRAnalysisResult, ReviewNote
+from app.schemas.pr import PRAnalysisRequest, PRAnalysisResponse, ReviewNoteBase, ReviewNoteResponse, PostCommentRequest
+from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, Depends
 from app.services.impact_analysis import analyze_impact
 from app.services.architecture import validate_architecture
 from app.services.incident_similarity import find_similar_incidents
-from app.services.context_builder import build_pr_context
-from app.services.llm import generate_review_checklist, generate_review_comments, generate_executive_summary, extract_jira_context
-from app.models.pr import SessionLocal, PRAnalysisResult
 
 router = APIRouter()
 
@@ -55,6 +60,9 @@ async def analyze_pr(request: PRAnalysisRequest):
         finally:
             db.close()
 
+        # Changed Symbols
+        symbols = analyze_symbols(pr_data)
+
         return PRAnalysisResponse(
             risk_score=risk_score,
             impact_analysis=impact,
@@ -63,7 +71,63 @@ async def analyze_pr(request: PRAnalysisRequest):
             review_checklist=checklist,
             suggested_comments=comments,
             jira_context=jira_context,
-            executive_summary=exec_summary
+            executive_summary=exec_summary,
+            changed_symbols=symbols
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@router.post("/note", response_model=ReviewNoteResponse)
+def save_review_note(note: ReviewNoteBase, db: Session = Depends(get_db)):
+    existing = db.query(ReviewNote).filter(
+        ReviewNote.repo_url == note.repo_url,
+        ReviewNote.pr_number == note.pr_number
+    ).first()
+
+    if existing:
+        existing.status = note.status
+        existing.notes = note.notes
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    new_note = ReviewNote(
+        repo_url=note.repo_url,
+        pr_number=note.pr_number,
+        status=note.status,
+        notes=note.notes
+    )
+    db.add(new_note)
+    db.commit()
+    db.refresh(new_note)
+    return new_note
+
+@router.get("/note", response_model=ReviewNoteResponse)
+def get_review_note(repo_url: str, pr_number: int, db: Session = Depends(get_db)):
+    existing = db.query(ReviewNote).filter(
+        ReviewNote.repo_url == repo_url,
+        ReviewNote.pr_number == pr_number
+    ).first()
+    if existing:
+        return existing
+    raise HTTPException(status_code=404, detail="Note not found")
+
+@router.post("/post-comment")
+async def post_comment(req: PostCommentRequest):
+    try:
+        res = await post_review_comment(req.repo_url, req.pr_number, req.comment_body)
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/history")
+def get_history(repo_url: str, db: Session = Depends(get_db)):
+    results = db.query(PRAnalysisResult).filter(PRAnalysisResult.repo_url == repo_url).order_by(PRAnalysisResult.created_at.desc()).all()
+    return results

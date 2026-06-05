@@ -22,4 +22,4 @@ def on_startup():
 
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to PR Copilot API"}
+    return {"message": "Welcome to PRScope API"}

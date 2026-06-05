@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "PR Copilot",
-  "version": "1.0",
+  "name": "PRScope",
+  "version": "1.0.0",
   "description": "GitHub PR Intelligence Platform",
   "permissions": [
     "activeTab",

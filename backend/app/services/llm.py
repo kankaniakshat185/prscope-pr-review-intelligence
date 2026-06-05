@@ -112,9 +112,15 @@ def generate_executive_summary(context: Dict[str, Any]) -> str:
         rules = "discuss security implications."
         
     prompt = f"""{base_prompt}
-Write a concise executive engineering summary (max 150 words) for this PR for a Tech Lead.
+Write a concise executive engineering summary for this PR for a Tech Lead.
 {rules}
 Summary must explicitly reference actual files changed. Include purpose, risks, impacted systems, and recommendations.
+
+FORMATTING RULES:
+You MUST use proper Markdown headings starting with ### (e.g., ### Purpose, ### Risks, ### Impacted Systems, ### Recommendations).
+Do NOT use bold text (**) for headings.
+Always add two newlines (\n\n) after a heading so the content starts on the next line.
+Use bullet points for lists.
 """
     res = generate_content(prompt)
     if res:

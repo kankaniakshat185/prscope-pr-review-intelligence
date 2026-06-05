@@ -13,15 +13,15 @@ def calculate_risk(pr_data: Dict[str, Any]) -> Dict[str, Any]:
     # Rule 1: LOC changed
     if total_loc > 1000:
         score += 3
-        factors.append({"factor": "High LOC changed", "value": total_loc, "impact": "High"})
+        factors.append({"name": "High LOC changed", "weight": 3, "reason": f"{total_loc} lines changed"})
     elif total_loc > 300:
         score += 1
-        factors.append({"factor": "Moderate LOC changed", "value": total_loc, "impact": "Medium"})
+        factors.append({"name": "Moderate LOC changed", "weight": 1, "reason": f"{total_loc} lines changed"})
         
     # Rule 2: Files changed
     if changed_files > 20:
         score += 2
-        factors.append({"factor": "Many files changed", "value": changed_files, "impact": "Medium"})
+        factors.append({"name": "Many files changed", "weight": 2, "reason": f"{changed_files} files changed"})
         
     # Rule 3: Critical directories
     critical_dirs = ["core", "auth", "payment", "security"]
@@ -40,12 +40,12 @@ def calculate_risk(pr_data: Dict[str, Any]) -> Dict[str, Any]:
                     
     if touched_critical:
         score += 3
-        factors.append({"factor": "Critical directories touched", "value": ", ".join(touched_critical), "impact": "High"})
+        factors.append({"name": "Critical directories touched", "weight": 3, "reason": f"Modified: {', '.join(touched_critical)}"})
         
     # Rule 4: Tests
     if total_loc > 100 and not has_tests:
         score += 2
-        factors.append({"factor": "No tests modified", "value": "0 tests", "impact": "Medium"})
+        factors.append({"name": "No tests modified", "weight": 2, "reason": "No test files detected in a large change"})
         
     # Normalize score
     score = min(10, score)
