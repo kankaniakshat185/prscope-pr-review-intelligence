@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+sqlalchemy
+psycopg2-binary
+chromadb
+google-generativeai
+networkx
+pyyaml
+httpx
+python-dotenv

@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "PR Copilot",
+  "version": "1.0",
+  "description": "GitHub PR Intelligence Platform",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://github.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/*/*/pull/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["index.html", "next/*"],
+      "matches": ["https://github.com/*"]
+    }
+  ],
+  "action": {
+    "default_title": "PR Copilot"
+  }
+}

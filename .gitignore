@@ -1,0 +1,30 @@
+# General
+.DS_Store
+*.swp
+*.swo
+
+# Environment Variables
+.env
+.env.*
+!.env.example
+
+# Python / Backend
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+backend/.pytest_cache/
+backend/chroma_db/
+backend/venv/
+backend/env/
+*.sqlite3
+
+# Node / Extension
+extension/node_modules/
+extension/.next/
+# We keep extension/out/ tracked or untracked depending on if we want the extension built in git,
+# but typically build artifacts are ignored.
+# extension/out/
+
+# IDEs
+.vscode/
+.idea/
