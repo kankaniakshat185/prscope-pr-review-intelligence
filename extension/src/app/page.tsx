@@ -15,7 +15,7 @@ function MainDashboard() {
   const repo = searchParams.get("repo");
   const pr = searchParams.get("pr");
 
-    const [showSettings, setShowSettings] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [keySavedMessage, setKeySavedMessage] = useState(false);
 
@@ -35,7 +35,7 @@ function MainDashboard() {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState("");
-  
+
   const [noteStatus, setNoteStatus] = useState("IN_PROGRESS");
   const [noteText, setNoteText] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
@@ -87,13 +87,30 @@ function MainDashboard() {
 
   const loginWithGitHub = async () => {
     try {
-      const res = await fetch("http://localhost:8000/api/analysis/auth/github/callback?code=mock");
+      // IN PRODUCTION: Change this to your deployed API URL
+      const API_BASE = "https://prscope.onrender.com";
+      const res = await fetch(`${API_BASE}/api/analysis/auth/github/login`);
       const data = await res.json();
-      if (data.access_token) {
-        setToken(data.access_token);
-        setUser(data.user);
-        localStorage.setItem("prscope_token", data.access_token);
-        localStorage.setItem("prscope_user", JSON.stringify(data.user));
+
+      if (data.url.includes("code=mock")) {
+        const mockRes = await fetch(data.url);
+        const mockData = await mockRes.json();
+        setToken(mockData.access_token);
+        setUser(mockData.user);
+        localStorage.setItem("prscope_token", mockData.access_token);
+        localStorage.setItem("prscope_user", JSON.stringify(mockData.user));
+      } else {
+        const popup = window.open(data.url, "github_oauth", "width=600,height=600");
+        const messageListener = (event) => {
+          if (event.data && event.data.access_token) {
+            setToken(event.data.access_token);
+            setUser(event.data.user);
+            localStorage.setItem("prscope_token", event.data.access_token);
+            localStorage.setItem("prscope_user", JSON.stringify(event.data.user));
+            window.removeEventListener("message", messageListener);
+          }
+        };
+        window.addEventListener("message", messageListener);
       }
     } catch (err) {
       console.error(err);
@@ -133,7 +150,7 @@ function MainDashboard() {
     try {
       const response = await fetch("http://localhost:8000/api/analysis/workspace/reviews", {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
@@ -189,7 +206,7 @@ function MainDashboard() {
       const eventsRes = await fetch(`http://localhost:8000/api/analysis/workspace/reviews/${id}/events`, {
         headers: { "Authorization": `Bearer ${token}` }
       });
-      
+
       if (response.ok && eventsRes.ok) {
         setSelectedReview(await response.json());
         setReviewEvents(await eventsRes.json());
@@ -225,10 +242,10 @@ function MainDashboard() {
 
   const copySnapshot = () => {
     if (!data) return;
-    const securityTxt = data.security_findings?.length > 0 
-      ? data.security_findings.map((f:any)=> `- ${f.severity}: ${f.name}`).join('\n') 
+    const securityTxt = data.security_findings?.length > 0
+      ? data.security_findings.map((f: any) => `- ${f.severity}: ${f.name}`).join('\n')
       : 'None';
-      
+
     let total_up = 0;
     let total_down = 0;
     data.impact_analysis?.dependency_graph?.modified_functions?.forEach((f: any) => {
@@ -236,24 +253,24 @@ function MainDashboard() {
       total_down += f.calls?.length || 0;
     });
     const depImpact = (total_up + total_down > 10) ? 'High' : (total_up + total_down > 5) ? 'Medium' : 'Low';
-    
+
     const ts = new Date().toLocaleString();
-    
-    const archTxt = data.architecture_violations?.length > 0 
-      ? data.architecture_violations.map((f:any)=> `- ${f}`).join('\n') 
+
+    const archTxt = data.architecture_violations?.length > 0
+      ? data.architecture_violations.map((f: any) => `- ${f}`).join('\n')
       : 'None';
-      
+
     const jiraTxt = data.jira_context ? `Ticket: ${data.jira_context.Ticket}\nConfidence: ${data.jira_context.Confidence}\nCoverage: ${data.jira_context.Coverage}\nMissing Requirements: ${data.jira_context.Missing_Requirements}` : 'None';
-    
+
     const prType = data.pr_type || 'Unknown';
 
     const md = `# PRScope Review Snapshot\n\n**Repository**: ${owner}/${repo}\n**PR Number**: #${pr}\n**PR URL**: https://github.com/${owner}/${repo}/pull/${pr}\n**Timestamp**: ${ts}\n\n**PR Type**: ${prType}\n**Risk Score**: ${data.risk_score.score}/10 (${data.risk_score.category})\n**Reviewability Score**: ${data.reviewability?.score ?? 'N/A'}/10\n**Review Decision**: ${getReviewDecision()?.status || 'N/A'}\n**Decision Reason**: ${getReviewDecision()?.reason || 'N/A'}\n\n**Status**: ${noteStatus}\n\n**Security Findings**:\n${securityTxt}\n\n**Architecture Violations**:\n${archTxt}\n\n**Dependency Impact**: ${depImpact} (${total_up} upstream / ${total_down} downstream)\n\n**Jira Context**:\n${jiraTxt}\n\n**Review Notes**:\n${noteText || 'None'}\n\n**Executive Summary**:\n${data.executive_summary}`;
-    
+
     window.parent.postMessage({ type: "COPY_TO_CLIPBOARD", text: md }, "*");
     alert("Review Snapshot copied to clipboard!");
   };
 
-  
+
   const getReviewDecision = () => {
     if (!data) return null;
     const { risk_score, security_findings, architecture_violations, pr_type } = data;
@@ -261,7 +278,7 @@ function MainDashboard() {
     const hasArch = architecture_violations && architecture_violations.length > 0;
     const score = risk_score?.score || 0;
     const isCriticalSec = hasSec && security_findings.some((f: any) => f.severity === 'Critical');
-    
+
     let hasTests = false;
     data.files?.forEach((f: any) => {
       if (f.filename?.toLowerCase().includes("test") || f.filename?.startsWith("tests/")) hasTests = true;
@@ -273,7 +290,7 @@ function MainDashboard() {
       total_down += f.calls?.length || 0;
     });
     const highDep = (total_up + total_down > 10);
-    
+
     if (isCriticalSec || hasSec) {
       return { status: "REQUEST CHANGES", reason: "Security concerns detected. Approval is not recommended until issues are resolved.", color: "text-[var(--color-danger-fg,#da3633)]", bg: "bg-[var(--color-danger-fg,#da3633)]" };
     }
@@ -295,7 +312,7 @@ function MainDashboard() {
     if (score <= 3 && !hasSec && !hasArch) {
       return { status: "APPROVE", reason: "Low risk change. Tests are present (or NA). No security concerns detected. No architecture violations found.", color: "text-[var(--color-success-fg,#3fb950)]", bg: "bg-[var(--color-success-fg,#3fb950)]" };
     }
-    
+
     return { status: "NEEDS REVIEW", reason: "Standard review recommended.", color: "text-[var(--color-attention-fg,#d29922)]", bg: "bg-[var(--color-attention-fg,#d29922)]" };
   };
 
@@ -338,10 +355,10 @@ function MainDashboard() {
         </div>
         <div className="ml-auto flex items-center gap-3">
           <button onClick={() => window.parent.postMessage({ type: "TOGGLE_COLLAPSE" }, "*")} className="text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] hover:text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] transition-colors" title="Collapse Panel">
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m13 17 5-5-5-5M6 17l5-5-5-5"/></svg>
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m13 17 5-5-5-5M6 17l5-5-5-5" /></svg>
           </button>
           <button onClick={() => setShowSettings(!showSettings)} className="text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] hover:text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] transition-colors" title="Settings">
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></svg>
           </button>
         </div>
         {!token && (
@@ -358,18 +375,18 @@ function MainDashboard() {
 
       </div>
 
-      
+
       {/* Settings Modal Inline */}
       {showSettings && (
         <div className="mb-4 p-3 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] rounded-md text-sm">
           <label className="block text-xs font-semibold text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] mb-1">Gemini API Key (BYOK)</label>
           <div className="flex gap-2">
-            <input 
-              type="password" 
-              value={apiKey} 
-              onChange={(e) => setApiKey(e.target.value)} 
-              placeholder="AIzaSy..." 
-              className={inputStyle + " flex-1"} 
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="AIzaSy..."
+              className={inputStyle + " flex-1"}
             />
             <button onClick={handleSaveApiKey} className={buttonStyle}>{keySavedMessage ? "Saved!" : "Save"}</button>
           </div>
@@ -378,13 +395,13 @@ function MainDashboard() {
       )}
       {/* Tabs */}
       <div className="flex gap-2 mb-4">
-        <button 
+        <button
           onClick={() => setActiveTab("PR_REVIEW")}
           className={`flex-1 py-1.5 text-sm font-medium rounded-md border transition-colors ${activeTab === "PR_REVIEW" ? "bg-[var(--bgColor-neutral-muted,var(--color-neutral-muted,#21262d))] text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] border-[#8b949e]" : "bg-transparent text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] border-transparent hover:bg-[var(--bgColor-neutral-muted,var(--color-neutral-muted,#21262d))]"}`}
         >
           PR Review
         </button>
-        <button 
+        <button
           onClick={() => setActiveTab("SAVED_REVIEWS")}
           className={`flex-1 py-1.5 text-sm font-medium rounded-md border transition-colors ${activeTab === "SAVED_REVIEWS" ? "bg-[var(--bgColor-neutral-muted,var(--color-neutral-muted,#21262d))] text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] border-[#8b949e]" : "bg-transparent text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] border-transparent hover:bg-[var(--bgColor-neutral-muted,var(--color-neutral-muted,#21262d))]"}`}
         >
@@ -418,7 +435,7 @@ function MainDashboard() {
                 </button>
                 {data.pr_type && (
                   <div className={`flex-1 flex items-center justify-center px-3 py-1.5 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] rounded-md text-sm whitespace-nowrap`}>
-                    <span className="text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] mr-1.5 text-xs font-semibold uppercase tracking-wide">PR Type:</span> 
+                    <span className="text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] mr-1.5 text-xs font-semibold uppercase tracking-wide">PR Type:</span>
                     <span className="font-medium text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">{data.pr_type}</span>
                   </div>
                 )}
@@ -429,12 +446,12 @@ function MainDashboard() {
                   <h3 className={`text-sm font-semibold flex items-center gap-2 ${textPrimary} m-0`}>
                     Risk Assessment
                   </h3>
-                  <Badge 
-                    variant="outline" 
+                  <Badge
+                    variant="outline"
                     className={
-                      data.risk_score.category === "High Risk" ? "text-[#f85149] border-[#f85149] bg-transparent" : 
-                      data.risk_score.category === "Medium Risk" ? "text-[var(--color-attention-fg,#d29922)] border-[#d29922] bg-transparent" : 
-                      "text-[var(--color-success-fg,#3fb950)] border-[#3fb950] bg-transparent"
+                      data.risk_score.category === "High Risk" ? "text-[#f85149] border-[#f85149] bg-transparent" :
+                        data.risk_score.category === "Medium Risk" ? "text-[var(--color-attention-fg,#d29922)] border-[#d29922] bg-transparent" :
+                          "text-[var(--color-success-fg,#3fb950)] border-[#3fb950] bg-transparent"
                     }
                   >
                     {data.risk_score.category}
@@ -445,13 +462,12 @@ function MainDashboard() {
                     <span className="text-2xl font-semibold text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] leading-none">{data.risk_score.score}</span>
                     <span className={`text-sm ${textSecondary} leading-none mb-0.5`}>/ 10</span>
                   </div>
-                  <Progress 
-                    value={data.risk_score.score * 10} 
-                    className={`h-1.5 mb-4 bg-[var(--bgColor-neutral-muted,var(--color-neutral-muted,#21262d))] ${
-                      data.risk_score.category === "High Risk" ? "[&>div]:bg-[var(--color-danger-bg,var(--color-danger-emphasis,#da3633))]" : 
-                      data.risk_score.category === "Medium Risk" ? "[&>div]:bg-[#bf8700]" : 
-                      "[&>div]:bg-[#1f7530]"
-                    }`}
+                  <Progress
+                    value={data.risk_score.score * 10}
+                    className={`h-1.5 mb-4 bg-[var(--bgColor-neutral-muted,var(--color-neutral-muted,#21262d))] ${data.risk_score.category === "High Risk" ? "[&>div]:bg-[var(--color-danger-bg,var(--color-danger-emphasis,#da3633))]" :
+                        data.risk_score.category === "Medium Risk" ? "[&>div]:bg-[#bf8700]" :
+                          "[&>div]:bg-[#1f7530]"
+                      }`}
                   />
                   <div className="space-y-2 mt-4 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] p-3 rounded-md border border-[var(--borderColor-default,var(--color-border-default,#30363d))]">
                     <div className={`text-xs font-semibold ${textSecondary} mb-2 uppercase tracking-wide`}>Risk Breakdown</div>
@@ -470,8 +486,8 @@ function MainDashboard() {
                   </div>
                 </div>
               </div>
-              
-                            {/* 1.5. Reviewability Score */}
+
+              {/* 1.5. Reviewability Score */}
               {data.reviewability && (
                 <div className={boxStyle}>
                   <div className={`${headerStyle} flex items-center justify-between`}>
@@ -489,13 +505,12 @@ function MainDashboard() {
                         {data.reviewability.score >= 8 ? 'High Reviewability' : data.reviewability.score >= 4 ? 'Medium Reviewability' : 'Low Reviewability'}
                       </span>
                     </div>
-                    <Progress 
-                      value={data.reviewability.score * 10} 
-                      className={`h-1.5 mb-4 bg-[var(--bgColor-neutral-muted,var(--color-neutral-muted,#21262d))] ${
-                        data.reviewability.score >= 8 ? "[&>div]:bg-[var(--color-success-fg,#3fb950)]" : 
-                        data.reviewability.score >= 4 ? "[&>div]:bg-[var(--color-attention-fg,#d29922)]" : 
-                        "[&>div]:bg-[var(--color-danger-fg,#da3633)]"
-                      }`}
+                    <Progress
+                      value={data.reviewability.score * 10}
+                      className={`h-1.5 mb-4 bg-[var(--bgColor-neutral-muted,var(--color-neutral-muted,#21262d))] ${data.reviewability.score >= 8 ? "[&>div]:bg-[var(--color-success-fg,#3fb950)]" :
+                          data.reviewability.score >= 4 ? "[&>div]:bg-[var(--color-attention-fg,#d29922)]" :
+                            "[&>div]:bg-[var(--color-danger-fg,#da3633)]"
+                        }`}
                     />
                     <div className="space-y-2 mt-4 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] p-3 rounded-md border border-[var(--borderColor-default,var(--color-border-default,#30363d))]">
                       <div className={`text-xs font-semibold ${textSecondary} mb-2 uppercase tracking-wide`}>Factors</div>
@@ -515,7 +530,7 @@ function MainDashboard() {
 
               {/* Accordions Container */}
               <Accordion type="multiple" className="w-full space-y-3" defaultValue={["executive_summary"]}>
-                
+
                 {/* 3. Security Findings */}
                 <AccordionItem value="security" className={boxStyle}>
                   <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
@@ -559,7 +574,7 @@ function MainDashboard() {
                   </AccordionContent>
                 </AccordionItem>
 
-{/* 6. Dependency Intelligence */}
+                {/* 6. Dependency Intelligence */}
                 <AccordionItem value="dependency" className={boxStyle}>
                   <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
                     <div className="flex items-center gap-2 text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">
@@ -578,7 +593,7 @@ function MainDashboard() {
                         });
                         const depImpact = (total_up + total_down > 10) ? 'High' : (total_up + total_down > 5) ? 'Medium' : 'Low';
                         const impactColor = depImpact === 'High' ? 'text-[var(--color-danger-fg,#da3633)]' : depImpact === 'Medium' ? 'text-[var(--color-attention-fg,#d29922)]' : 'text-[var(--color-success-fg,#3fb950)]';
-                        
+
                         return (
                           <div className="bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] p-3 rounded-md border border-[var(--borderColor-default,var(--color-border-default,#30363d))] mb-4">
                             <div className="text-xs font-semibold text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] uppercase tracking-wide mb-1">Dependency Impact</div>
@@ -589,16 +604,16 @@ function MainDashboard() {
                           </div>
                         );
                       })()}
-                      
+
                       <div className={`text-xs ${textSecondary}`}>
-                        Impacted Services: {data.impact_analysis?.affected_services?.join(", ") || "None"} <br/>
+                        Impacted Services: {data.impact_analysis?.affected_services?.join(", ") || "None"} <br />
                         Impacted Modules: {data.impact_analysis?.affected_modules?.join(", ") || "None"}
                       </div>
-                      
+
                       {data.impact_analysis?.dependency_graph?.modified_functions?.map((dep: any, i: number) => (
                         <div key={i} className="bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] rounded-md p-3">
                           <div className="text-sm font-mono font-semibold text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] break-all mb-2">{dep.function}</div>
-                          
+
                           <div className="grid grid-cols-2 gap-4">
                             <div>
                               <div className="text-[10px] text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] uppercase font-bold mb-1">Called By (Upstream)</div>
@@ -626,7 +641,7 @@ function MainDashboard() {
                   </AccordionContent>
                 </AccordionItem>
 
-{/* 7. Changed Symbols */}
+                {/* 7. Changed Symbols */}
                 <AccordionItem value="symbols" className={boxStyle}>
                   <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
                     <div className="flex items-center gap-2 text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">
@@ -640,7 +655,7 @@ function MainDashboard() {
                         <div>
                           <div className={`text-xs font-semibold ${textSecondary} mb-2`}>Functions Modified:</div>
                           <div className="flex flex-wrap gap-2">
-                            {data.changed_symbols.functions_modified.map((f:string, i:number) => (
+                            {data.changed_symbols.functions_modified.map((f: string, i: number) => (
                               <span key={i} className="text-[12px] bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] px-2 py-1 rounded-md text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] font-mono">{f}</span>
                             ))}
                           </div>
@@ -650,7 +665,7 @@ function MainDashboard() {
                         <div>
                           <div className={`text-xs font-semibold ${textSecondary} mb-2`}>Functions Added:</div>
                           <div className="flex flex-wrap gap-2">
-                            {data.changed_symbols.functions_added.map((f:string, i:number) => (
+                            {data.changed_symbols.functions_added.map((f: string, i: number) => (
                               <span key={i} className="text-[12px] bg-[#1f7530]/10 border border-[#1f7530]/30 px-2 py-1 rounded-md text-[var(--color-success-fg,#3fb950)] font-mono">{f}</span>
                             ))}
                           </div>
@@ -664,7 +679,7 @@ function MainDashboard() {
                 <AccordionItem value="architecture" className={boxStyle}>
                   <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
                     <div className="flex items-center gap-2 text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">
-                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m3 15 2 2 4-4"/></svg>
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 22h14a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v4" /><path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="m3 15 2 2 4-4" /></svg>
                       Architecture Violations
                       {data.architecture_violations?.length > 0 && (
                         <Badge className="ml-2 bg-[var(--color-danger-bg,var(--color-danger-emphasis,#da3633))] text-white border-transparent text-[10px] py-0">{data.architecture_violations.length}</Badge>
@@ -686,7 +701,7 @@ function MainDashboard() {
                   </AccordionContent>
                 </AccordionItem>
 
-{/* 2. Executive Summary */}
+                {/* 2. Executive Summary */}
                 <AccordionItem value="executive_summary" className={boxStyle}>
                   <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
                     <div className="flex items-center gap-2 text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">
@@ -696,13 +711,13 @@ function MainDashboard() {
                   </AccordionTrigger>
                   <AccordionContent className="p-4 bg-[var(--bgColor-default,var(--color-canvas-default,#010409))] border-t border-[var(--borderColor-default,var(--color-border-default,#30363d))]">
                     <div className="text-sm text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] leading-relaxed max-w-none break-words">
-                      <ReactMarkdown 
+                      <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={{
-                          h3: ({node, ...props}) => <h3 className="text-base font-bold text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] mt-6 mb-2" {...props} />,
-                          p: ({node, ...props}) => <p className="my-2 leading-6 whitespace-pre-wrap break-words" {...props} />,
-                          ul: ({node, ...props}) => <ul className="list-disc pl-5 my-2 break-words" {...props} />,
-                          li: ({node, ...props}) => <li className="my-1 break-words" {...props} />
+                          h3: ({ node, ...props }) => <h3 className="text-base font-bold text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] mt-6 mb-2" {...props} />,
+                          p: ({ node, ...props }) => <p className="my-2 leading-6 whitespace-pre-wrap break-words" {...props} />,
+                          ul: ({ node, ...props }) => <ul className="list-disc pl-5 my-2 break-words" {...props} />,
+                          li: ({ node, ...props }) => <li className="my-1 break-words" {...props} />
                         }}
                       >
                         {data.executive_summary}
@@ -711,7 +726,7 @@ function MainDashboard() {
                   </AccordionContent>
                 </AccordionItem>
 
-{/* 4. Review Checklist */}
+                {/* 4. Review Checklist */}
                 <AccordionItem value="checklist" className={boxStyle}>
                   <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
                     <div className="flex items-center gap-2 text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">
@@ -731,7 +746,7 @@ function MainDashboard() {
                   </AccordionContent>
                 </AccordionItem>
 
-{/* 5. Suggested Comments */}
+                {/* 5. Suggested Comments */}
                 <AccordionItem value="comments" className={boxStyle}>
                   <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
                     <div className="flex items-center gap-2 text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">
@@ -763,13 +778,13 @@ function MainDashboard() {
                               <span className="font-semibold block mb-1">Suggestion:</span>
                               <span className="leading-relaxed">{comment.suggestion}</span>
                             </div>
-                            <button 
-                                onClick={() => postCommentToGithub(comment, i)}
-                                disabled={postingComment === i.toString()}
-                                className={`w-full flex items-center justify-center gap-1 ${primaryButtonStyle}`}
-                              >
-                                <Send className="h-3 w-3" />
-                                {postingComment === i.toString() ? "Posting..." : "Post to GitHub"}
+                            <button
+                              onClick={() => postCommentToGithub(comment, i)}
+                              disabled={postingComment === i.toString()}
+                              className={`w-full flex items-center justify-center gap-1 ${primaryButtonStyle}`}
+                            >
+                              <Send className="h-3 w-3" />
+                              {postingComment === i.toString() ? "Posting..." : "Post to GitHub"}
                             </button>
                           </div>
                         ))}
@@ -783,7 +798,7 @@ function MainDashboard() {
                 <AccordionItem value="decision" className={boxStyle}>
                   <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
                     <div className="flex items-center gap-2 text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">
-                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="m9 12 2 2 4-4"/></svg>
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z" /><path d="m9 12 2 2 4-4" /></svg>
                       Review Decision
                     </div>
                   </AccordionTrigger>
@@ -807,7 +822,7 @@ function MainDashboard() {
                 <AccordionItem value="jira" className={boxStyle}>
                   <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
                     <div className="flex items-center gap-2 text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">
-                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
                       Jira Context
                     </div>
                   </AccordionTrigger>
@@ -843,7 +858,7 @@ function MainDashboard() {
                   </AccordionContent>
                 </AccordionItem>
 
-{/* 8. Review Notes */}
+                {/* 8. Review Notes */}
                 <AccordionItem value="review_notes" className={boxStyle}>
                   <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
                     <div className="flex items-center gap-2 text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">
@@ -852,7 +867,7 @@ function MainDashboard() {
                     </div>
                   </AccordionTrigger>
                   <AccordionContent className="p-4 bg-[var(--bgColor-default,var(--color-canvas-default,#010409))] border-t border-[var(--borderColor-default,var(--color-border-default,#30363d))]">
-                    <select 
+                    <select
                       value={noteStatus}
                       onChange={(e) => setNoteStatus(e.target.value)}
                       className={`w-full mb-3 ${inputStyle}`}
@@ -869,7 +884,7 @@ function MainDashboard() {
                       className={`w-full h-24 mb-3 resize-y ${inputStyle}`}
                       style={{ fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" }}
                     />
-                    <button 
+                    <button
                       onClick={saveReviewWorkspace}
                       disabled={noteSaving || !token}
                       className={`w-full ${primaryButtonStyle} py-2 ${!token ? "opacity-50 cursor-not-allowed" : ""}`}
@@ -899,7 +914,7 @@ function MainDashboard() {
               <button onClick={() => setSelectedReview(null)} className={`text-xs flex items-center gap-1 ${textSecondary} hover:text-white transition-colors`}>
                 ← Back to List
               </button>
-              
+
               <div className={boxStyle}>
                 <div className={`${headerStyle} flex justify-between items-center`}>
                   <div className="font-semibold">{selectedReview.repository} #{selectedReview.pr_number}</div>
@@ -949,8 +964,8 @@ function MainDashboard() {
               <div className="flex gap-2">
                 <div className="relative flex-1">
                   <Search className="absolute left-2.5 top-2 h-4 w-4 text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))]" />
-                  <input 
-                    placeholder="Search repo, title, PR..." 
+                  <input
+                    placeholder="Search repo, title, PR..."
                     className={`${inputStyle} w-full pl-9 h-9`}
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
@@ -958,10 +973,10 @@ function MainDashboard() {
                 </div>
               </div>
               <div className="flex gap-2">
-                <select 
-                  className={`${inputStyle} flex-1 h-9 appearance-none bg-no-repeat pr-8`} 
+                <select
+                  className={`${inputStyle} flex-1 h-9 appearance-none bg-no-repeat pr-8`}
                   style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundPosition: "calc(100% - 12px) center" }}
-                  value={filterStatus} 
+                  value={filterStatus}
                   onChange={e => setFilterStatus(e.target.value)}
                 >
                   <option value="All">All Statuses</option>
@@ -970,10 +985,10 @@ function MainDashboard() {
                   <option value="NEEDS_CHANGES">Needs Changes</option>
                   <option value="FOLLOW_UP_REQUIRED">Follow Up Required</option>
                 </select>
-                <select 
-                  className={`${inputStyle} flex-1 h-9 appearance-none bg-no-repeat pr-8`} 
+                <select
+                  className={`${inputStyle} flex-1 h-9 appearance-none bg-no-repeat pr-8`}
                   style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundPosition: "calc(100% - 12px) center" }}
-                  value={sortOrder} 
+                  value={sortOrder}
                   onChange={e => setSortOrder(e.target.value)}
                 >
                   <option value="newest">Most Recent</option>
@@ -1017,7 +1032,7 @@ function MainDashboard() {
 function LockIcon(props: any) {
   return (
     <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      <rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
     </svg>
   );
 }

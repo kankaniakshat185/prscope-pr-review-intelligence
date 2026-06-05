@@ -6,9 +6,10 @@ class Settings(BaseSettings):
     GITHUB_TOKEN: str = ""
     GEMINI_API_KEY: str = ""
     CHROMA_DB_DIR: str = "./chroma_db"
+    GITHUB_CLIENT_ID: str = ""
+    GITHUB_CLIENT_SECRET: str = ""
 
     class Config:
         env_file = ".env"
 
 settings = Settings()
-settings.DATABASE_URL = "sqlite:///./prscope.db"

@@ -37,29 +37,88 @@ def get_db():
 
 @router.get("/auth/github/login")
 def github_login():
-    # In a real scenario, this redirects to https://github.com/login/oauth/authorize
-    # For this implementation, we redirect to callback with a mock code
-    return {"url": "http://localhost:8000/api/analysis/auth/github/callback?code=mock_github_code"}
+    if not settings.GITHUB_CLIENT_ID:
+        return {"url": "http://localhost:8000/api/analysis/auth/github/callback?code=mock"}
+    
+    redirect_uri = f"https://github.com/login/oauth/authorize?client_id={settings.GITHUB_CLIENT_ID}&scope=read:user user:email"
+    return {"url": redirect_uri}
 
 @router.get("/auth/github/callback")
-def github_callback(code: str, db: Session = Depends(get_db)):
-    # Exchange code for token and fetch user info.
-    # Mock user creation for workspace persistence.
-    github_id = "123456"
+async def github_callback(code: str, db: Session = Depends(get_db)):
+    if code == "mock":
+        github_id = "123456"
+        username = "dev_reviewer"
+        avatar_url = "https://github.com/ghost.png"
+    else:
+        # Real OAuth Flow
+        async with httpx.AsyncClient() as client:
+            # 1. Exchange code for access token
+            token_res = await client.post(
+                "https://github.com/login/oauth/access_token",
+                data={
+                    "client_id": settings.GITHUB_CLIENT_ID,
+                    "client_secret": settings.GITHUB_CLIENT_SECRET,
+                    "code": code
+                },
+                headers={"Accept": "application/json"}
+            )
+            token_data = token_res.json()
+            access_token = token_data.get("access_token")
+            
+            if not access_token:
+                raise HTTPException(status_code=400, detail="Failed to get access token from GitHub")
+                
+            # 2. Fetch user profile
+            user_res = await client.get(
+                "https://api.github.com/user",
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+            )
+            user_data = user_res.json()
+            github_id = str(user_data.get("id"))
+            username = user_data.get("login")
+            avatar_url = user_data.get("avatar_url")
+
+    # 3. Create or update user
     user = db.query(User).filter(User.github_id == github_id).first()
     if not user:
         user = User(
             github_id=github_id,
-            username="dev_reviewer",
-            avatar_url="https://github.com/ghost.png",
-            email="dev@example.com"
+            username=username,
+            avatar_url=avatar_url,
+            email=username + "@github.com"
         )
         db.add(user)
-        db.commit()
-        db.refresh(user)
+    else:
+        user.username = username
+        user.avatar_url = avatar_url
+    
+    db.commit()
+    db.refresh(user)
 
+    # 4. Generate our backend JWT
     token = create_access_token(data={"sub": str(user.id)})
-    return {"access_token": token, "token_type": "bearer", "user": {"username": user.username, "avatar_url": user.avatar_url}}
+    user_payload = {"username": user.username, "avatar_url": user.avatar_url}
+    
+    if code == "mock":
+        return {"access_token": token, "token_type": "bearer", "user": user_payload}
+        
+    # 5. Return HTML to postMessage back to the extension
+    html_content = f"""
+    <html>
+        <body>
+            <script>
+                window.opener.postMessage({{
+                    "access_token": "{token}",
+                    "user": {json.dumps(user_payload)}
+                }}, "*");
+                window.close();
+            </script>
+            <p>Authentication successful! You can close this window.</p>
+        </body>
+    </html>
+    """
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=html_content)
 
 
 # ==================================================
