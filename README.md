@@ -1,4 +1,4 @@
-# PRScope
+# PRScope - PR Review Intelligence
 
 [Chrome Web Store Extension Link - Coming Soon]
 
