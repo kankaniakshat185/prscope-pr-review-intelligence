@@ -1,6 +1,6 @@
-# PR Copilot - GitHub PR Intelligence Platform
+# PRScope - GitHub PR Intelligence 
 
-PR Copilot is a Chrome Extension that injects a right-hand sidebar into GitHub Pull Request pages. It provides a deterministic risk engine, dependency impact analysis, architecture validation, incident similarity check, and Gemini-based review checklists and suggested comments.
+PRScope is a Chrome Extension that injects a right-hand sidebar into GitHub Pull Request pages. It provides a deterministic risk engine, dependency impact analysis, architecture validation, incident similarity check, and Gemini-based review checklists and suggested comments.
 
 ## Tech Stack
 - **Frontend**: Next.js 15, Tailwind CSS, shadcn/ui
