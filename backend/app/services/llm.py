@@ -174,23 +174,19 @@ Format EXACTLY like this:
 [1 sentence]
 """
     res = generate_content(prompt, api_key)
-    if res:
+    if res and "RATE_LIMIT_EXCEEDED" not in res:
         return res
-    return """### Purpose
-Minor updates.
+        
+    return """### ⚠️ Global Rate Limit Exceeded
+The global free-tier Gemini API pool is currently experiencing exceptionally high demand and has temporarily rate-limited inference requests.
 
-### Risk
-Low.
+### ⚡ Instant Bypass (BYOK)
+You can instantly bypass this global queue by providing your own free Google Gemini API Key. Click the **Settings (⚙️)** gear icon in the top right corner of the extension to securely add your key to local storage for unlimited inference.
 
-### Impact
-Minimal.
+### 🔄 Automatic Refresh
+Alternatively, you can wait a short moment for the global API quota pool to refresh and retry the analysis.
 
-### Recommendation
-Approve.
-
-> [!WARNING]
-> **API Quota Exceeded or Invalid Key**
-> This is a deterministic fallback summary. Please add your own Gemini API Key in the **Settings (⚙️)** or wait for the daily quota to refresh to receive full AI-powered intelligence."""
+> *Note: Deterministic security scanning, dependency intelligence, and architecture rule validations are unaffected by this limit and have executed successfully below.*"""
 
 def extract_jira_context(pr_data: Dict[str, Any], api_key: str = None) -> Dict[str, Any]:
     text = f"{pr_data.get('title', '')} {pr_data.get('description', '')}"
