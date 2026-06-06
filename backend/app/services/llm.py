@@ -19,6 +19,9 @@ def generate_content(prompt: str, api_key: str = None) -> str:
         if response.status_code == 200:
             res_json = response.json()
             return res_json['candidates'][0]['content']['parts'][0]['text']
+        elif response.status_code == 429:
+            print("Rate limit exceeded for Gemini API")
+            return '{"error": "RATE_LIMIT_EXCEEDED"}'
         else:
             print(f"Error generating content: {response.text}")
             return ""

@@ -6,6 +6,7 @@ class PRAnalysisRequest(BaseModel):
     repo_url: str
     pr_number: int
     gemini_api_key: Optional[str] = None
+    custom_rules_yaml: Optional[str] = None
 
 class PRAnalysisResponse(BaseModel):
     risk_score: Dict[str, Any]

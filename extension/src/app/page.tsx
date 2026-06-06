@@ -8,6 +8,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { AlertCircle, CheckCircle, GitMerge, ShieldAlert, Cpu, Layout, Code2, ClipboardCopy, History, Save, GitPullRequest, Search, Send, Link as LinkIcon, Network } from "lucide-react";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import DependencyGraph from '@/components/DependencyGraph';
 
 function MainDashboard() {
   const searchParams = useSearchParams();
@@ -18,6 +19,17 @@ function MainDashboard() {
   const [showSettings, setShowSettings] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [keySavedMessage, setKeySavedMessage] = useState(false);
+  const [customRulesYaml, setCustomRulesYaml] = useState<string | null>(null);
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setCustomRulesYaml(e.target?.result as string);
+    };
+    reader.readAsText(file);
+  };
 
   useEffect(() => {
     setApiKey(localStorage.getItem("prscope_gemini_key") || "");
@@ -32,8 +44,8 @@ function MainDashboard() {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<any>(null);
 
-  // IN PRODUCTION: Change this to your deployed API URL
-  const API_BASE = "https://prscope.onrender.com";
+  // IN PRODUCTION: Change this to your deployed API URL via environment variables
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://prscope.onrender.com";
 
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any>(null);
@@ -129,6 +141,7 @@ function MainDashboard() {
           repo_url: `https://github.com/${owner}/${repo}`,
           pr_number: parseInt(pr, 10),
           gemini_api_key: localStorage.getItem("prscope_gemini_key") || undefined,
+          custom_rules_yaml: customRulesYaml || undefined,
         }),
       });
 
@@ -379,19 +392,38 @@ function MainDashboard() {
 
       {/* Settings Modal Inline */}
       {showSettings && (
-        <div className="mb-4 p-3 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] rounded-md text-sm">
-          <label className="block text-xs font-semibold text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] mb-1">Gemini API Key (BYOK)</label>
-          <div className="flex gap-2">
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="AIzaSy..."
-              className={inputStyle + " flex-1"}
-            />
-            <button onClick={handleSaveApiKey} className={buttonStyle}>{keySavedMessage ? "Saved!" : "Save"}</button>
+        <div className="mb-4 flex flex-col gap-3">
+          <div className="p-3 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] rounded-md text-sm shadow-sm transition-all hover:shadow-md">
+            <label className="block text-xs font-semibold text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] mb-2">
+              Gemini API Key (BYOK)
+              <span className="font-normal text-[10px] ml-2 opacity-70">(Leave blank for free global tier)</span>
+            </label>
+            <div className="flex gap-2 items-center">
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="AIzaSy..."
+                className="bg-[var(--bgColor-default,var(--color-canvas-default,#010409))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] rounded-md px-2 py-1 flex-1 text-sm text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] outline-none focus:border-[#8b949e] focus:ring-1 focus:ring-[#8b949e]"
+              />
+              <button onClick={handleSaveApiKey} className="bg-[var(--bgColor-neutral-muted,var(--color-neutral-muted,#21262d))] border border-[#363b42] text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] hover:bg-[#30363d] hover:border-[#8b949e] transition-colors rounded-md text-sm font-medium py-1 px-3">
+                {keySavedMessage ? "Saved!" : "Save"}
+              </button>
+            </div>
           </div>
-          <p className="text-[10px] text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] mt-1">Leave blank to use the free global tier (Rate limits apply).</p>
+
+          <div className="p-3 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] rounded-md text-sm shadow-sm transition-all hover:shadow-md">
+            <label className="block text-xs font-semibold text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] mb-2">Custom Architecture Rules (.yml)</label>
+            <div className="flex gap-2 items-center">
+              <input
+                type="file"
+                accept=".yml,.yaml"
+                onChange={handleFileUpload}
+                className="text-xs text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] file:mr-2 file:py-1 file:px-2 file:rounded file:border border-[var(--borderColor-default,var(--color-border-default,#30363d))] file:text-xs file:font-semibold file:bg-[var(--bgColor-neutral-muted,var(--color-neutral-muted,#21262d))] file:text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] hover:file:bg-[#30363d] cursor-pointer"
+              />
+              {customRulesYaml && <CheckCircle className="h-4 w-4 text-[var(--color-success-fg,#3fb950)]" />}
+            </div>
+          </div>
         </div>
       )}
       {/* Tabs */}
@@ -637,6 +669,13 @@ function MainDashboard() {
                       ))}
                       {(!data.impact_analysis?.dependency_graph?.modified_functions || data.impact_analysis?.dependency_graph?.modified_functions.length === 0) && (
                         <div className={`text-xs ${textSecondary}`}>No direct function dependencies extracted from patch.</div>
+                      )}
+
+                      {data.impact_analysis?.dependency_graph && (
+                        <div className="mt-4">
+                          <div className="text-xs font-semibold text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] uppercase tracking-wide mb-2">Visual Graph</div>
+                          <DependencyGraph graphData={data.impact_analysis.dependency_graph} />
+                        </div>
                       )}
                     </div>
                   </AccordionContent>

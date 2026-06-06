@@ -6,7 +6,7 @@ from app.schemas.pr import (
     PRAnalysisRequest, PRAnalysisResponse, ReviewNoteBase, ReviewNoteResponse, 
     PostCommentRequest, SavedReviewCreate, SavedReviewResponse, ReviewEventResponse
 )
-from app.services.github import fetch_pr_data
+from app.services.github import fetch_pr_data, fetch_architecture_rules
 from app.services.risk_engine import calculate_risk
 from app.services.context_builder import build_pr_context
 from app.services.llm import generate_review_checklist, generate_review_comments, generate_executive_summary, extract_jira_context, explain_security_finding
@@ -173,7 +173,10 @@ async def analyze_pr(request: PRAnalysisRequest):
                 security_findings.append(enriched)
                 
         # 5. Architecture & Similarity
-        arch_violations = validate_architecture(pr_data)
+        rules_yaml = request.custom_rules_yaml
+        if not rules_yaml:
+            rules_yaml = await fetch_architecture_rules(pr_data.get("owner", ""), pr_data.get("repo", ""))
+        arch_violations = validate_architecture(pr_data, rules_yaml)
         similar_incidents = find_similar_incidents(pr_data)
         
         # 6. Deterministic risk engine
@@ -362,3 +365,28 @@ async def post_comment(req: PostCommentRequest):
 def get_history(repo_url: str, db: Session = Depends(get_db)):
     results = db.query(PRAnalysisResult).filter(PRAnalysisResult.repo_url == repo_url).order_by(PRAnalysisResult.created_at.desc()).all()
     return results
+
+# ==================================================
+# WEBHOOKS
+# ==================================================
+from fastapi import Request
+
+@router.post("/webhook/github")
+async def github_webhook(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return {"status": "error", "message": "Invalid JSON"}
+
+    if "pull_request" in payload:
+        action = payload.get("action")
+        if action in ["opened", "synchronize", "reopened"]:
+            pr_number = payload["pull_request"]["number"]
+            owner = payload["repository"]["owner"]["login"]
+            repo = payload["repository"]["name"]
+            
+            # Fire and forget analysis
+            # In a real app we'd dispatch to a task queue like Celery here
+            print(f"Received webhook for {owner}/{repo} PR #{pr_number}")
+            
+    return {"status": "received"}

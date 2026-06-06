@@ -41,3 +41,18 @@ async def fetch_pr_data(repo_url: str, pr_number: int) -> Dict[str, Any]:
         "changed_files": pr_info.get("changed_files", 0),
         "files": files_info
     }
+
+async def fetch_architecture_rules(owner: str, repo: str) -> str:
+    headers = {
+        "Accept": "application/vnd.github.v3.raw",
+        "User-Agent": "PRScope"
+    }
+    if settings.GITHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {settings.GITHUB_TOKEN}"
+
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/.prscope.yml"
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.text
+        return None
