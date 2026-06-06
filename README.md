@@ -16,14 +16,23 @@ Generates a quantifiable Risk Score (1-10) and a Reviewability Index based on ri
 ### Automated Security & Architecture Auditing
 Detects common exploitation vectors and architectural abstraction leaks. It systematically flags structural code violations against established design patterns (e.g., SOLID, DRY) and highlights potential zero-day entry points introduced in the diff.
 
-### Causal Dependency Mapping
-Constructs an abstract syntax tree representation of the modifications to map upstream service dependencies and downstream module impacts. Identifies exactly which components of the codebase are at risk of cascading failure due to the proposed changes.
+### Dynamic Architecture Verification (.prscope.yml)
+Supports highly customized, repository-specific architectural rules. The engine dynamically fetches and parses `.prscope.yml` definitions from the target repository root, allowing engineering teams to enforce strict, bespoke module boundaries and import restrictions on a per-project basis.
+
+### Causal Dependency Mapping & Visualization
+Constructs an abstract syntax tree representation of the modifications to map upstream service dependencies and downstream module impacts. Identifies exactly which components of the codebase are at risk of cascading failure and renders a dynamic, visual dependency graph directly within the Chrome Extension UI.
 
 ### Stateful Review Generation
 Cross-references the pull request diff against provided Jira/Linear ticket context to ensure strict adherence to business requirements. Generates highly contextual, actionable inline comments that can be directly submitted to the GitHub timeline via the extension UI.
 
 ### Bring Your Own Key (BYOK) Architecture
 Engineered with a primary focus on data sovereignty. Users can bypass the public API quota pool by locally persisting their own Gemini API keys via secure browser storage, enabling unlimited, unrestricted model inference.
+
+### Asynchronous Webhook Integration
+Engineered for scale, the FastAPI backend features native GitHub Webhook ingestion. The platform autonomously listens for `pull_request` lifecycle events (opened, synchronized, reopened) to trigger background analysis, paving the way for CI/CD integration and decoupled task queue processing.
+
+### Resilient Inference & Rate Limit Handling
+The LLM service layer implements robust exception boundaries to handle upstream API quotas gracefully. If global rate limits (HTTP 429) are exceeded, the platform automatically degrades into a deterministic heuristic mode, ensuring risk scores and dependency graphs are reliably delivered even during inference outages.
 
 ## System Architecture
 
