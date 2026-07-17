@@ -4,30 +4,59 @@ import re
 from typing import Dict, Any, List
 from app.core.config import settings
 
-def generate_content(prompt: str, api_key: str = None) -> str:
-    key_to_use = api_key or settings.GEMINI_API_KEY
-    if not key_to_use:
-        return ""
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key_to_use}"
-        headers = {'Content-Type': 'application/json'}
-        data = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.1}
-        }
-        response = requests.post(url, headers=headers, json=data)
-        if response.status_code == 200:
-            res_json = response.json()
-            return res_json['candidates'][0]['content']['parts'][0]['text']
-        elif response.status_code == 429:
-            print("Rate limit exceeded for Gemini API")
-            return '{"error": "RATE_LIMIT_EXCEEDED"}'
-        else:
-            print(f"Error generating content: {response.text}")
+def generate_content(prompt: str, api_key: str = None, provider: str = "gemini") -> str:
+    if provider == "openai":
+        key_to_use = api_key or settings.OPENAI_API_KEY
+        if not key_to_use:
             return ""
-    except Exception as e:
-        print(f"Error generating content: {e}")
-        return ""
+        try:
+            url = "https://api.openai.com/v1/chat/completions"
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {key_to_use}'
+            }
+            data = {
+                "model": "gpt-4o",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1
+            }
+            response = requests.post(url, headers=headers, json=data)
+            if response.status_code == 200:
+                res_json = response.json()
+                return res_json['choices'][0]['message']['content']
+            elif response.status_code == 429:
+                print("Rate limit exceeded for OpenAI API")
+                return '{"error": "RATE_LIMIT_EXCEEDED"}'
+            else:
+                print(f"Error generating content (OpenAI): {response.text}")
+                return ""
+        except Exception as e:
+            print(f"Error generating content (OpenAI): {e}")
+            return ""
+    else:
+        key_to_use = api_key or settings.GEMINI_API_KEY
+        if not key_to_use:
+            return ""
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key_to_use}"
+            headers = {'Content-Type': 'application/json'}
+            data = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.1}
+            }
+            response = requests.post(url, headers=headers, json=data)
+            if response.status_code == 200:
+                res_json = response.json()
+                return res_json['candidates'][0]['content']['parts'][0]['text']
+            elif response.status_code == 429:
+                print("Rate limit exceeded for Gemini API")
+                return '{"error": "RATE_LIMIT_EXCEEDED"}'
+            else:
+                print(f"Error generating content (Gemini): {response.text}")
+                return ""
+        except Exception as e:
+            print(f"Error generating content (Gemini): {e}")
+            return ""
 
 def parse_json_response(text: str) -> Any:
     # Remove markdown formatting if present
@@ -50,7 +79,7 @@ Do not generate concerns unrelated to the modified files.
 If this is a documentation-only PR, focus entirely on documentation review.
 """
 
-def generate_review_checklist(context: Dict[str, Any], api_key: str = None) -> List[str]:
+def generate_review_checklist(context: Dict[str, Any], api_key: str = None, provider: str = "gemini") -> List[str]:
     base_prompt = build_base_prompt(context)
     pr_type = context.get('pr_type')
     
@@ -68,13 +97,13 @@ Generate a code review checklist with maximum 5 items based ONLY on the context 
 Never generate: null handling, performance bottlenecks, test coverage unless the modified code actually justifies those concerns.
 Output as a JSON list of strings.
 """
-    res = generate_content(prompt, api_key)
+    res = generate_content(prompt, api_key, provider)
     parsed = parse_json_response(res)
     if isinstance(parsed, list):
         return parsed[:5]
     return ["Verify code changes against requirements"]
 
-def generate_review_comments(context: Dict[str, Any], api_key: str = None) -> List[Dict[str, Any]]:
+def generate_review_comments(context: Dict[str, Any], api_key: str = None, provider: str = "gemini") -> List[Dict[str, Any]]:
     base_prompt = build_base_prompt(context)
     prompt = f"""{base_prompt}
 Generate up to 3 high-impact specific review comments for this PR grounded in actual changes.
@@ -104,7 +133,7 @@ Example:
     "severity": "Warning"
 }}]
 """
-    res = generate_content(prompt, api_key)
+    res = generate_content(prompt, api_key, provider)
     parsed = parse_json_response(res)
     comments = []
     if isinstance(parsed, list):
@@ -120,7 +149,7 @@ Example:
         return sorted(comments, key=lambda x: (severity_score(x.get('severity')), x.get('confidence', 0)), reverse=True)[:3]
     return []
 
-def explain_security_finding(finding: dict, api_key: str = None) -> dict:
+def explain_security_finding(finding: dict, api_key: str = None, provider: str = "gemini") -> dict:
     prompt = f"""
 Explain the following security finding deterministically discovered by the security engine.
 DO NOT detect vulnerabilities. Only EXPLAIN what was found.
@@ -138,7 +167,7 @@ Return JSON with:
 "recommendation": "How to fix it safely.",
 "impact_summary": "What happens if exploited."
 """
-    res = generate_content(prompt, api_key)
+    res = generate_content(prompt, api_key, provider)
     parsed = parse_json_response(res)
     if isinstance(parsed, dict):
         return {
@@ -149,7 +178,7 @@ Return JSON with:
         }
     return finding
 
-def generate_executive_summary(context: Dict[str, Any], api_key: str = None) -> str:
+def generate_executive_summary(context: Dict[str, Any], api_key: str = None, provider: str = "gemini") -> str:
     base_prompt = build_base_prompt(context)
     
     prompt = f"""{base_prompt}
@@ -173,7 +202,7 @@ Format EXACTLY like this:
 ### Recommendation
 [1 sentence]
 """
-    res = generate_content(prompt, api_key)
+    res = generate_content(prompt, api_key, provider)
     if res and "RATE_LIMIT_EXCEEDED" not in res:
         return res
         
@@ -188,7 +217,7 @@ Alternatively, you can wait a short moment for the global API quota pool to refr
 
 > *Note: Deterministic security scanning, dependency intelligence, and architecture rule validations are unaffected by this limit and have executed successfully below.*"""
 
-def extract_jira_context(pr_data: Dict[str, Any], api_key: str = None) -> Dict[str, Any]:
+def extract_jira_context(pr_data: Dict[str, Any], api_key: str = None, provider: str = "gemini") -> Dict[str, Any]:
     text = f"{pr_data.get('title', '')} {pr_data.get('description', '')}"
     jira_pattern = r'[A-Z]+-\d+'
     matches = re.findall(jira_pattern, text)
@@ -199,7 +228,7 @@ def extract_jira_context(pr_data: Dict[str, Any], api_key: str = None) -> Dict[s
     ticket_id = matches[0]
     
     prompt = f"Given Jira ticket {ticket_id} and PR title '{pr_data.get('title')}', generate Jira Alignment intelligence. Output JSON exactly with keys: 'Ticket', 'Confidence' (number 0-100), 'Coverage' (e.g. '3 / 4'), 'Missing Requirements' (string describing potential gaps)."
-    res = generate_content(prompt, api_key)
+    res = generate_content(prompt, api_key, provider)
     parsed = parse_json_response(res)
     if isinstance(parsed, dict):
         return {

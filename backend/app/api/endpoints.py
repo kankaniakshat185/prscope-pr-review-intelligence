@@ -135,6 +135,9 @@ async def analyze_pr(request: PRAnalysisRequest):
     from app.services.context_builder import classify_pr
     
     try:
+        active_key = request.openai_api_key if request.ai_provider == "openai" else request.gemini_api_key
+        provider = request.ai_provider
+
         pr_data = await fetch_pr_data(request.repo_url, request.pr_number)
         
         pr_type = classify_pr(pr_data.get('files', []))
@@ -169,7 +172,7 @@ async def analyze_pr(request: PRAnalysisRequest):
             raw_findings = analyze_security(pr_data.get('files', []))
             # Enrich with Gemini Explanations
             for finding in raw_findings:
-                enriched = explain_security_finding(finding, request.gemini_api_key)
+                enriched = explain_security_finding(finding, active_key, provider)
                 security_findings.append(enriched)
                 
         # 5. Architecture & Similarity
@@ -200,10 +203,10 @@ async def analyze_pr(request: PRAnalysisRequest):
         pr_context = build_pr_context(pr_data, risk_score, impact, arch_violations)
         
         # 9. LLM Generators
-        checklist = generate_review_checklist(pr_context, request.gemini_api_key)
-        comments = generate_review_comments(pr_context, request.gemini_api_key)
-        exec_summary = generate_executive_summary(pr_context, request.gemini_api_key)
-        jira_context = extract_jira_context(pr_data, request.gemini_api_key)
+        checklist = generate_review_checklist(pr_context, active_key, provider)
+        comments = generate_review_comments(pr_context, active_key, provider)
+        exec_summary = generate_executive_summary(pr_context, active_key, provider)
+        jira_context = extract_jira_context(pr_data, active_key, provider)
 
         return PRAnalysisResponse(
             risk_score=risk_score,
@@ -356,7 +359,7 @@ def get_review_note(repo_url: str, pr_number: int, db: Session = Depends(get_db)
 @router.post("/post-comment")
 async def post_comment(req: PostCommentRequest):
     try:
-        res = await post_review_comment(req.repo_url, req.pr_number, req.comment_body)
+        res = await post_review_comment(req.repo_url, req.pr_number, req.comment_body, req.github_token)
         return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

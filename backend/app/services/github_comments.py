@@ -2,9 +2,10 @@ import httpx
 from typing import Dict, Any
 from app.core.config import settings
 
-async def post_review_comment(repo_url: str, pr_number: int, comment_body: str) -> Dict[str, Any]:
-    if not settings.GITHUB_TOKEN:
-        raise ValueError("GitHub token is required to post comments")
+async def post_review_comment(repo_url: str, pr_number: int, comment_body: str, github_token: str = None) -> Dict[str, Any]:
+    active_token = github_token or settings.GITHUB_TOKEN
+    if not active_token:
+        raise ValueError("GitHub token is required to post comments. Please provide one in the extension settings or backend env.")
 
     parts = repo_url.rstrip('/').split('/')
     if len(parts) < 2:
@@ -13,7 +14,7 @@ async def post_review_comment(repo_url: str, pr_number: int, comment_body: str) 
     
     headers = {
         "Accept": "application/vnd.github.v3+json",
-        "Authorization": f"Bearer {settings.GITHUB_TOKEN}",
+        "Authorization": f"Bearer {active_token}",
         "User-Agent": "PRScope"
     }
 

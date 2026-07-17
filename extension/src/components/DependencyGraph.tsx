@@ -55,11 +55,12 @@ export default function DependencyGraph({ graphData }: { graphData: any }) {
         nodeLabel="name"
         nodeColor={(node: any) => node.color}
         nodeRelSize={4}
-        width={800} // This will be constrained by the container
+        width={340} 
         height={300}
         linkDirectionalArrowLength={3.5}
         linkDirectionalArrowRelPos={1}
         linkColor={() => "rgba(139, 148, 158, 0.5)"}
+        d3VelocityDecay={0.3}
       />
     </div>
   );

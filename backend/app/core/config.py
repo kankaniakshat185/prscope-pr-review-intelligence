@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./prscope.db"
     GITHUB_TOKEN: str = ""
     GEMINI_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
     CHROMA_DB_DIR: str = "./chroma_db"
     GITHUB_CLIENT_ID: str = ""
     GITHUB_CLIENT_SECRET: str = ""

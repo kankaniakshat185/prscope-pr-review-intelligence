@@ -22,3 +22,5 @@ We use Google's Gemini LLM to generate the reviews. Code diffs are sent to the L
 
 ## 5. Contact
 Since PRScope is an open-source tool, you can inspect the code, open an issue, or contact the developer directly via our GitHub repository: https://github.com/kankaniakshat185/prscope
+
+For privacy-related inquiries, you can also contact us at kankaniakshat185@gmail.com.

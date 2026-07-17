@@ -6,6 +6,8 @@ class PRAnalysisRequest(BaseModel):
     repo_url: str
     pr_number: int
     gemini_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    ai_provider: str = "gemini"
     custom_rules_yaml: Optional[str] = None
 
 class PRAnalysisResponse(BaseModel):
@@ -40,6 +42,7 @@ class PostCommentRequest(BaseModel):
     repo_url: str
     pr_number: int
     comment_body: str
+    github_token: Optional[str] = None
 
 class SavedReviewCreate(BaseModel):
     repository: str

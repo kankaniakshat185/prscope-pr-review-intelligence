@@ -4,12 +4,7 @@
   "version": "1.0.0",
   "description": "GitHub PR Intelligence Platform",
   "permissions": [
-    "activeTab",
-    "scripting",
     "clipboardWrite"
-  ],
-  "host_permissions": [
-    "https://github.com/*"
   ],
   "content_scripts": [
     {
