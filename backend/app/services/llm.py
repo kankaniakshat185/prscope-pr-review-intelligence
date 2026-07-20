@@ -37,6 +37,7 @@ def generate_content(prompt: str, api_key: str = None, provider: str = "gemini")
         key_to_use = api_key or settings.GEMINI_API_KEY
         if not key_to_use:
             return ""
+        import time
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key_to_use}"
             headers = {'Content-Type': 'application/json'}
@@ -44,16 +45,22 @@ def generate_content(prompt: str, api_key: str = None, provider: str = "gemini")
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {"temperature": 0.1}
             }
-            response = requests.post(url, headers=headers, json=data)
-            if response.status_code == 200:
-                res_json = response.json()
-                return res_json['candidates'][0]['content']['parts'][0]['text']
-            elif response.status_code == 429:
-                print("Rate limit exceeded for Gemini API")
-                return '{"error": "RATE_LIMIT_EXCEEDED"}'
-            else:
-                print(f"Error generating content (Gemini): {response.text}")
-                return ""
+            
+            for attempt in range(3):
+                response = requests.post(url, headers=headers, json=data)
+                if response.status_code == 200:
+                    res_json = response.json()
+                    return res_json['candidates'][0]['content']['parts'][0]['text']
+                elif response.status_code == 429:
+                    if attempt < 2:
+                        print(f"Rate limit hit (attempt {attempt+1}), backing off...")
+                        time.sleep(2 * (attempt + 1))
+                        continue
+                    print("Rate limit exceeded for Gemini API")
+                    return '{"error": "RATE_LIMIT_EXCEEDED"}'
+                else:
+                    print(f"Error generating content (Gemini): {response.text}")
+                    return ""
         except Exception as e:
             print(f"Error generating content (Gemini): {e}")
             return ""
