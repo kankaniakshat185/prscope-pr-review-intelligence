@@ -4,19 +4,22 @@
   "version": "1.0.0",
   "description": "GitHub PR Intelligence Platform",
   "permissions": [
+    "activeTab",
+    "scripting",
     "clipboardWrite"
   ],
-  "content_scripts": [
-    {
-      "matches": ["https://github.com/*/*/pull/*"],
-      "js": ["content.js"],
-      "run_at": "document_end"
-    }
-  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "web_accessible_resources": [
     {
-      "resources": ["index.html", "next/*"],
-      "matches": ["https://github.com/*"]
+      "resources": [
+        "index.html",
+        "next/*"
+      ],
+      "matches": [
+        "https://github.com/*"
+      ]
     }
   ],
   "action": {

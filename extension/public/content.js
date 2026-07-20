@@ -1,5 +1,25 @@
 (function() {
-  if (document.getElementById("pr-copilot-sidebar")) return;
+  const repoUrl = window.location.href;
+  const match = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)\/pull\/(\d+)/);
+  let prUrl = "";
+  if (match) {
+    prUrl = `?owner=${match[1]}&repo=${match[2]}&pr=${match[3]}`;
+  }
+  const newSrc = chrome.runtime.getURL(`index.html${prUrl}`);
+
+  if (document.getElementById("pr-copilot-sidebar")) {
+    const sidebar = document.getElementById("pr-copilot-sidebar");
+    const iframe = sidebar.querySelector("iframe");
+    if (iframe && iframe.src !== newSrc) {
+      iframe.src = newSrc;
+    }
+    sidebar.style.transform = "translateX(0)";
+    const body = document.querySelector("body");
+    if (body) body.style.paddingRight = "400px";
+    const peekBar = document.getElementById("pr-copilot-peekbar");
+    if (peekBar) peekBar.style.display = "none";
+    return;
+  }
 
   // Create a container for the sidebar
   const sidebar = document.createElement("div");
@@ -19,16 +39,7 @@
 
   // Load the React app in an iframe
   const iframe = document.createElement("iframe");
-  
-  // Pass the current URL as a parameter so the app knows which PR to analyze
-  const repoUrl = window.location.href;
-  const match = repoUrl.match(/github\.com\/([^\/]+)\/([^\/]+)\/pull\/(\d+)/);
-  let prUrl = "";
-  if (match) {
-    prUrl = `?owner=${match[1]}&repo=${match[2]}&pr=${match[3]}`;
-  }
-
-  iframe.src = chrome.runtime.getURL(`index.html${prUrl}`);
+  iframe.src = newSrc;
   iframe.allow = "clipboard-write";
   
   Object.assign(iframe.style, {
@@ -42,6 +53,7 @@
   
   // Create an invisible overlay for the peek bar when collapsed
   const peekBar = document.createElement("div");
+  peekBar.id = "pr-copilot-peekbar";
   Object.assign(peekBar.style, {
     position: "absolute",
     left: "0",
