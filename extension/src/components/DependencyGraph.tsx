@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import type { DependencyGraphData } from "@/lib/types";
 
 // Dynamically import ForceGraph2D with SSR disabled
@@ -13,10 +13,11 @@ type GraphNode = { id: string; name: string; val: number; color: string };
 type GraphLink = { source: string; target: string };
 
 export default function DependencyGraph({ graphData }: { graphData: DependencyGraphData }) {
-  const [data, setData] = useState<{ nodes: GraphNode[]; links: GraphLink[] }>({ nodes: [], links: [] });
-
-  useEffect(() => {
-    if (!graphData || !graphData.modified_functions) return;
+  // Pure derivation from the graphData prop - computed during render via
+  // useMemo rather than an effect + separate state, so there's no extra
+  // render where the graph is momentarily empty.
+  const data = useMemo<{ nodes: GraphNode[]; links: GraphLink[] }>(() => {
+    if (!graphData || !graphData.modified_functions) return { nodes: [], links: [] };
 
     const nodesMap = new Map<string, GraphNode>();
     const links: GraphLink[] = [];
@@ -42,10 +43,7 @@ export default function DependencyGraph({ graphData }: { graphData: DependencyGr
       });
     });
 
-    setData({
-      nodes: Array.from(nodesMap.values()),
-      links: links,
-    });
+    return { nodes: Array.from(nodesMap.values()), links };
   }, [graphData]);
 
   if (data.nodes.length === 0) {

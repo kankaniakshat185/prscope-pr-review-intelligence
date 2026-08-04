@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build && cp public/manifest.json out/ && cp public/content.js out/ && node postbuild.js",
+    "build": "next build && cp public/manifest.json out/ && cp public/content.js out/ && node postbuild.mjs",
     "start": "next start",
     "lint": "eslint"
   },

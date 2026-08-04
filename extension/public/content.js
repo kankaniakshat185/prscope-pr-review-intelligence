@@ -82,9 +82,7 @@
     body.style.paddingRight = "400px";
   }
   
-  let isCollapsed = false;
   peekBar.addEventListener("click", () => {
-    isCollapsed = false;
     sidebar.style.transform = "translateX(0)";
     if (body) body.style.paddingRight = "400px";
     peekBar.style.display = "none";
@@ -98,7 +96,7 @@
     if (event.source !== iframe.contentWindow) return;
 
     if (event.data && event.data.type === "COPY_TO_CLIPBOARD") {
-      navigator.clipboard.writeText(event.data.text).catch(err => {
+      navigator.clipboard.writeText(event.data.text).catch(() => {
         const textarea = document.createElement("textarea");
         textarea.value = event.data.text;
         document.body.appendChild(textarea);
@@ -107,7 +105,6 @@
         document.body.removeChild(textarea);
       });
     } else if (event.data && event.data.type === "TOGGLE_COLLAPSE") {
-      isCollapsed = true;
       sidebar.style.transform = "translateX(390px)";
       if (body) body.style.paddingRight = "10px";
       peekBar.style.display = "block";

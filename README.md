@@ -11,47 +11,78 @@ Built for high-velocity engineering teams, PRScope significantly reduces the cog
 ## Core Capabilities
 
 ### Deterministic Risk Assessment
-Generates a quantifiable Risk Score (1-10) and a Reviewability Index based on rigid heuristics rather than stochastic LLM generation. Evaluates factors such as Line of Code (LOC) volatility, symbol modification density, test coverage deltas, PR description fidelity, and — for **Python files** — McCabe cyclomatic complexity, computed from an actual control-flow graph built for each added/modified function (not a LOC-based proxy), to triage the risk of a merge.
+- Risk Score (1–10) + Reviewability Index from rigid heuristics, not LLM output
+- Factors: LOC volatility, symbol modification density, test coverage deltas, PR description fidelity
+- **Python:** McCabe cyclomatic complexity from a real control-flow graph per function — not a LOC-based proxy
 
 ### Automated Security & Architecture Auditing
-For **Python files**, added lines are scanned with [Bandit](https://bandit.readthedocs.io/), an established static-analysis security linter (hardcoded credentials, unsafe deserialization, command injection, weak crypto, and dozens of other checks), supplemented by a small set of deterministic pattern rules for gaps Bandit doesn't cover (e.g. generic `API_KEY`/`SECRET`/`TOKEN`-style hardcoded credential naming). For **all other file types** (JS/TS, etc.), detection falls back to the pattern rules alone. Either way, only *added* lines are scanned, and this doesn't detect unknown ("zero-day") vulnerability classes by design — it's built to catch known-bad patterns reliably, not to reason about novel exploits.
-
-Architecture boundary rules (`.prscope.yml`) use the same approach: real AST-based import analysis for Python files (so it correctly ignores a restricted name merely mentioned in a comment or string, unlike naive text matching), with pattern-based detection as the fallback for non-Python files.
+- **Python:** added lines scanned with [Bandit](https://bandit.readthedocs.io/) (hardcoded credentials, unsafe deserialization, command injection, weak crypto, dozens more), supplemented by pattern rules for gaps Bandit misses (e.g. generic `API_KEY`/`SECRET`/`TOKEN` naming)
+- **All other languages:** pattern rules only
+- Only *added* lines are scanned; catches known-bad patterns by design, not novel/zero-day exploits
+- Architecture rules (`.prscope.yml`) use the same split: real AST-based import analysis for Python (ignores a restricted name merely mentioned in a comment or string), pattern-based fallback elsewhere
 
 ### Dynamic Architecture Verification (.prscope.yml)
-Supports highly customized, repository-specific architectural rules. The engine dynamically fetches and parses `.prscope.yml` definitions from the target repository root, allowing engineering teams to enforce strict, bespoke module boundaries and import restrictions on a per-project basis.
+- Fetches and parses a `.prscope.yml` from the target repo root at analysis time
+- Lets teams enforce bespoke module boundaries and import restrictions per project
 
 ### Causal Dependency Mapping & Visualization
-For **Python and JS/TS files** (`.js`/`.jsx`/`.mjs`/`.cjs`/`.ts`/`.tsx`), fetches the real base and head commit content for each changed file from the GitHub Contents API and builds a call graph from the actual file (not a diff-hunk reconstruction), rendered as a visual dependency graph in the Chrome Extension UI. Because the whole file is parsed, calls made from or to code the diff didn't touch are captured correctly too — not just what's visible in the patch. Python parsing uses the `ast` module; JS/TS parsing uses [tree-sitter](https://tree-sitter.github.io/tree-sitter/) (the `tree-sitter-javascript`/`tree-sitter-typescript` grammars), so both a call like `foo()` and a method call like `this.bar()` are resolved the same way a Python `ast.Call`/`ast.Attribute` would be. By default this is still per-file, single-PR scope, not a full-repository index, so a caller in a different file won't show up — that's what the repo-wide index below is for. If real content can't be fetched (rate limits, huge PRs, deleted files), Python falls back to diff-fragment reconstruction; JS/TS files without real content are skipped entirely for the call graph rather than attempting a similarly lossy reconstruction. Other languages (Go, Java, Ruby, etc.) currently don't produce a dependency graph.
+- **Python + JS/TS** (`.js`/`.jsx`/`.mjs`/`.cjs`/`.ts`/`.tsx`): fetches real base/head file content and builds the call graph from the actual file, not a diff-hunk reconstruction — so calls the diff never touched are still captured
+- Python via the `ast` module; JS/TS via [tree-sitter](https://tree-sitter.github.io/tree-sitter/), resolving both `foo()` and `this.bar()`-style calls
+- Per-file, single-PR scope by default — a caller in a different file needs the repo-wide index below
+- Fallback: Python reconstructs from the diff if real content is unavailable; JS/TS is skipped rather than reconstructed (less reliable for that grammar)
+- No dependency graph yet for other languages (Go, Java, Ruby, etc.)
 
 ### Full-Repo Index & Cross-File Blast Radius
-The "PR-local" call graph above only sees callers inside files the PR itself touched. On request (the extension's "Build Index" button, or `POST /index/build`), the backend does a one-time scan of the repository's default branch — walking the full Git tree, fetching every parseable file, and persisting every function/method definition and call edge it finds to the database (`repo_indexes`/`indexed_functions`/`indexed_calls`). Once built, every analysis of that repo enriches each modified/added function with `repo_wide_called_by`: callers found *anywhere* in the repo, not just this PR's changed files — including functions that would otherwise look "locally unconnected" and get filtered out of the report entirely. Later runs are incremental: the backend diffs the current default-branch head against the last indexed commit (GitHub's compare API) and only re-parses files that actually changed, instead of rescanning the whole repo again. A repo that has an active webhook (see below) also gets its index refreshed automatically as PR activity comes in, once it's been built at least once.
-
-Known limitations, stated plainly: callee resolution is by bare name only (same tradeoff the PR-local graph already makes), so a common function name can match unrelated definitions elsewhere in the repo — this is an approximation, not a precise reference-resolution engine. The initial full build is capped at `MAX_FILES_PER_INDEX` (500) files and relies on GitHub's tree API, which itself truncates on very large repositories. Building the index is an explicit, opt-in action — running `/analyze` on a repo never triggers one on its own.
+- Opt-in, explicit action ("Build Index" button / `POST /index/build`) — a one-time scan of the repo's default branch, persisting every function/call edge found
+- Enriches every analysis with `repo_wide_called_by`: callers anywhere in the repo, not just this PR's files — rescues functions that would otherwise look unconnected and get filtered out entirely
+- Later runs are incremental — diffs against the last-indexed commit and only re-parses what changed
+- Auto-refreshes off webhook activity, but only for a repo that's already been indexed once
+- **Limitations:** bare-name callee resolution only (approximate, same tradeoff as the PR-local graph); capped at 500 files per build; inherits GitHub's own tree-API truncation on very large repos
 
 ### Stateful Review Generation
-Cross-references the pull request diff against provided Jira/Linear ticket context to ensure strict adherence to business requirements. Generates highly contextual, actionable inline comments that can be directly submitted to the GitHub timeline via the extension UI.
+- Cross-references the PR diff against provided Jira/Linear ticket context
+- Generates contextual inline comments, submittable directly to the GitHub timeline
 
 ### Team-Shared Saved Reviews
-Saved reviews (Workspace tab) default to a private "My Reviews" view, same as before — but a "Team Reviews" toggle switches to everyone's saved reviews for the repository currently open in GitHub, each still attributed to the teammate who wrote it. There's no separate team/org membership system behind this: access is gated on the requester already having saved at least one review of their own for that repository (proof they've used PRScope on it before), not on real GitHub-permission verification — a deliberate simplification, stated plainly rather than implied as more rigorous than it is. Saving, editing, and status changes remain per-user; nothing is merged or overwritten across teammates.
+- "Team Reviews" toggle (Workspace tab) shows everyone's saved reviews for the currently-open repo, each attributed to its author
+- Access requires already having a review of your own in that repo — a deliberate simplification, not real GitHub-permission verification, and stated as such
+- Saving/editing stays per-user; nothing is merged or overwritten across teammates
 
 ### Team-Contributed Incidents
-`find_similar_incidents` no longer only matches against the 3 hand-written stub examples. From the PR Review panel's Historical Incidents section, anyone can report a real incident from their own repository (a short description + severity); it's embedded into the same ChromaDB collection immediately and factored into every subsequent similarity search — no separate ingestion step. Reported incidents are attributed to the reporting user and tagged with the repository they came from, so a repo's own team-added incidents can be listed back (`GET /incidents?repository=...`) separately from the global reference examples. This is still a small, manually-curated set, not a real incident database with structured taxonomies or automatic ingestion from PagerDuty/Jira/etc.
+- Anyone can report a real incident from their repo (description + severity) via the Historical Incidents panel
+- Embedded into the same ChromaDB collection immediately — factored into every subsequent similarity search, no separate ingestion step
+- A repo's own contributions are listed back separately (`GET /incidents?repository=...`) from the global reference set
+
+### Real, Sourced Incident Data + Measured Retrieval Quality
+- Reference set is 15 real, publicly-documented incidents (Knight Capital 2012, GitLab.com 2017, Cloudflare 2019, Heartbleed, Log4Shell, CrowdStrike 2024, and more), each with a source citation — not placeholder text
+- Retrieval quality is *measured*, not assumed: 15 hand-labeled queries run through a precision@k evaluation, asserted as regression-tested minimums (`tests/test_retrieval_eval.py`)
+- Measured results: **93% precision@1**, **100% hit-rate@3**
+- That evaluation caught a real bug — the display threshold was hiding 12 of 15 correct matches from users despite correct ranking; recalibrated from the measured score distributions, now surfaces 14 of 15
 
 ### GitHub Commit Status Publishing
-The extension's "Publish Status" button posts the deterministic risk verdict (Approve / Needs Review / Request Changes) as a commit status on the PR's head commit via GitHub's Statuses API, so it shows up directly in the PR's own **Checks** section — not just inside the extension. This is a deliberately separate, explicit action from running an analysis, so `/analyze` never silently writes to a repository the caller doesn't intend to; it requires both a PRScope login and a GitHub Personal Access Token with `repo:status` scope (configured the same way as the existing inline-comment posting). Uses the Statuses API rather than the newer Checks API on purpose — Checks requires registering PRScope as a GitHub App with an installation-token flow, which is a larger undertaking than a PAT-based status; the tradeoff is a plainer single-line status instead of rich inline annotations.
+- "Publish Status" button posts the risk verdict as a commit status on the PR's head commit (GitHub Statuses API) — visible in the PR's own **Checks** section
+- A separate, explicit action from running analysis — `/analyze` itself never writes to a repo
+- Requires a PRScope login + a GitHub PAT with `repo:status` scope
+- Uses the Statuses API, not the newer Checks API (which needs a full GitHub App) — simpler, at the cost of a plain single-line status instead of rich inline annotations
 
 ### Bring Your Own Key (BYOK) Architecture
-Users can bypass the shared API quota pool by supplying their own Gemini or OpenAI API key, persisted in the browser's local storage. Note this storage is **not encrypted** — treat it like any other locally-cached credential, and prefer a scoped/limited-privilege key where possible.
+- Bypass the shared quota pool with your own Gemini/OpenAI key, stored in browser local storage
+- **Not encrypted** — treat it like any other locally-cached credential; prefer scoped/limited-privilege keys
 
-### GitHub Webhook Ingestion (signature-verified, CI-style automated analysis)
-The FastAPI backend exposes a signature-verified `pull_request` webhook receiver (`opened`, `synchronize`, `reopened`), gated by `GITHUB_WEBHOOK_SECRET`. Requests without a valid `X-Hub-Signature-256` are rejected outright. A valid event schedules a deterministic analysis run, debounced per PR (`WEBHOOK_DEBOUNCE_SECONDS`, default 30s): a quick series of pushes fires several `synchronize` events in a row, and each new event for the same PR restarts that PR's timer instead of queuing its own run, so only the last push within the window actually gets analyzed. Once that run completes, the risk verdict is published back to GitHub as a commit status (via `settings.GITHUB_TOKEN` — there's no per-user PAT in a webhook context), the same mechanism described above under GitHub Commit Status Publishing. This makes the webhook a real (if lightweight) CI check: no task queue, no separate worker process — the debounce timer and the analysis both run as an `asyncio` task inside the same backend process, which is a reasonable tradeoff for one instance but wouldn't coordinate correctly across multiple backend replicas without a shared store.
+### GitHub Webhook Ingestion (CI-style automated analysis)
+- Signature-verified `pull_request` receiver (`opened`/`synchronize`/`reopened`), gated by `GITHUB_WEBHOOK_SECRET`
+- Debounced per PR (default 30s) — a burst of pushes triggers one analysis, not one per push
+- Publishes the risk verdict back as a commit status automatically, using the server's shared token
+- Runs as an in-process `asyncio` task — fine for one backend instance, wouldn't coordinate across multiple replicas without a shared store
 
 ### Resilient Inference & Rate Limit Handling
-The LLM service layer implements robust exception boundaries to handle upstream API quotas gracefully, with bounded timeouts, retry-with-backoff (both providers), and thread-pool offloading so a slow provider response can't stall the whole API process. If global rate limits (HTTP 429) are exceeded, the platform automatically degrades into a deterministic heuristic mode, ensuring risk scores and dependency graphs are reliably delivered even during inference outages.
+- Bounded timeouts, retry-with-backoff on both LLM providers, thread-pool offloading so a slow provider can't stall the API process
+- Automatically degrades to deterministic-only mode if global rate limits are hit
 
 ### Progressive Analysis (fast deterministic results, AI content streams in after)
-Analysis is split into two calls: `POST /analyze` runs only the deterministic engines (risk score, security findings, architecture violations, dependency graph, reviewability) and returns in well under a second, since it never touches an LLM. `POST /analyze/enrich` then runs the LLM-generated content (executive summary, review checklist, suggested comments, Jira context, and AI explanations for security findings) separately, which can legitimately take a minute or more given the retry/backoff behavior above. The extension renders deterministic results the moment they arrive rather than blocking the whole UI on the slower call.
+- `POST /analyze`: deterministic engines only — returns in well under a second, never touches an LLM
+- `POST /analyze/enrich`: LLM-generated content (summary, checklist, comments, Jira context), fetched separately, can take a minute+
+- Extension renders deterministic results immediately rather than blocking on the slower call
 
 ## Security Model
 
@@ -87,7 +118,7 @@ graph TD
 
     subgraph Data [Persistence]
         DB[(SQLite or PostgreSQL<br/>users, saved reviews, repo-wide function/call index)]
-        Chroma[(ChromaDB<br/>incident similarity — 3 seeded examples)]
+        Chroma[(ChromaDB<br/>15 real sourced incidents + team-contributed)]
     end
 
     subgraph External [External Services]
@@ -108,7 +139,8 @@ graph TD
     Engines -->|fetch PR diff, files & base/head content| GH
     Engines -.->|read: cross-file blast radius| DB
     API -->|post comments & commit statuses, user-supplied PAT| GH
-    Engines --> Chroma
+    Engines -->|read: similarity search| Chroma
+    API -->|write: report a team incident| Chroma
     API --> LLMSvc
     LLMSvc --> Gemini
     LLMSvc --> OpenAI
@@ -202,7 +234,7 @@ npm run build
 
 ### CI
 
-`.github/workflows/ci.yml` runs on every push/PR to `main`: the backend job installs pinned dependencies and runs `pytest`; the extension job typechecks (`tsc --noEmit`) and builds the actual Chrome extension bundle. Linting runs too but is currently informational (`continue-on-error`) pending cleanup of a few pre-existing findings unrelated to the app code (see the workflow file for specifics).
+`.github/workflows/ci.yml` runs on every push/PR to `main`: the backend job installs pinned dependencies and runs `pytest`; the extension job typechecks (`tsc --noEmit`), builds the actual Chrome extension bundle, and lints — all blocking.
 
 ## License
 MIT License. See `LICENSE` for more information.

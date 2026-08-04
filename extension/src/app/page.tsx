@@ -59,6 +59,12 @@ function MainDashboard() {
     return () => window.removeEventListener("message", handleMessage);
   }, []);
 
+  // Same reasoning as SettingsPanel.tsx: this is a static export with no
+  // per-request server (next.config.ts: output: "export"), so localStorage
+  // can only be read safely after mount - reading it eagerly would both
+  // crash Next's build-time prerender (no `localStorage` in Node) and
+  // cause a hydration mismatch against the statically-generated markup.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     // Check local storage for token
     const storedToken = localStorage.getItem("prscope_token");
@@ -68,6 +74,7 @@ function MainDashboard() {
       if (storedUser) setUser(JSON.parse(storedUser));
     }
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     // Analysis requires a login (the backend requires a bearer token on /analyze).

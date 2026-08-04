@@ -50,15 +50,5 @@ jobs:
       - name: Build (Chrome extension bundle)
         run: npm run build
 
-      # Not blocking yet: page.tsx has been componentized and typed (the
-      # ~30 no-explicit-any findings that motivated this are gone), but a
-      # handful of pre-existing findings remain unrelated to that work -
-      # postbuild.js's CommonJS require()s, a couple of unused vars in
-      # content.js/layout.tsx, and react-hooks/set-state-in-effect on the
-      # localStorage-hydration-on-mount pattern (used deliberately in a few
-      # places; fixing it "properly" means lazy useState initializers with
-      # SSR guards, a separate piece of work). Flip to blocking once those
-      # are cleared.
-      - name: Lint (informational - see comment above for what's left)
+      - name: Lint
         run: npm run lint
-        continue-on-error: true

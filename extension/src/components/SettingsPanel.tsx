@@ -17,12 +17,23 @@ export function SettingsPanel({
   const [aiProvider, setAiProvider] = useState("gemini");
   const [keySavedMessage, setKeySavedMessage] = useState(false);
 
+  // This app is a Next.js static export (next.config.ts: output: "export")
+  // rendered into a fixed index.html with no per-request server, so
+  // localStorage is never available while that HTML is generated - it can
+  // only be read once the client has mounted. Reading it via a lazy
+  // useState initializer instead of this effect would run during Next's
+  // build-time prerender (throwing, since `localStorage` doesn't exist in
+  // Node) and would also produce a first-client-render value that doesn't
+  // match the statically-generated markup, triggering a hydration
+  // mismatch. The effect intentionally defers the read to after mount.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setApiKey(localStorage.getItem("prscope_gemini_key") || "");
     setOpenaiKey(localStorage.getItem("prscope_openai_key") || "");
     setGithubToken(localStorage.getItem("prscope_github_token") || "");
     setAiProvider(localStorage.getItem("prscope_ai_provider") || "gemini");
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleSaveApiKey = () => {
     localStorage.setItem("prscope_gemini_key", apiKey);
