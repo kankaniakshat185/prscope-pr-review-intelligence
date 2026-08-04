@@ -147,6 +147,16 @@ export interface SavedReview {
   created_at: string;
   updated_at: string;
   last_reviewed_at: string | null;
+  author_username?: string | null; // populated only in the team-shared view
+}
+
+export interface TeamIncident {
+  incident_id: string;
+  description: string;
+  severity: string;
+  repository: string;
+  date: string;
+  reported_by: string | null;
 }
 
 export interface ReviewEvent {

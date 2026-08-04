@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -8,7 +8,7 @@ import { AlertCircle, CheckCircle, ShieldAlert, Layout, Code2, ClipboardCopy, Gi
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import DependencyGraph from "@/components/DependencyGraph";
-import type { PRAnalysisData, ReviewDecision, SuggestedComment } from "@/lib/types";
+import type { PRAnalysisData, ReviewDecision, SuggestedComment, TeamIncident } from "@/lib/types";
 import { boxStyle, headerStyle, buttonStyle, primaryButtonStyle, textPrimary, textSecondary, inputStyle, selectChevronStyle } from "@/lib/styles";
 
 const markdownComponents = {
@@ -144,6 +144,36 @@ export function PrReviewPanel({
   const [postingStatus, setPostingStatus] = useState(false);
   const [indexBuilding, setIndexBuilding] = useState(false);
   const [indexBuildMessage, setIndexBuildMessage] = useState<string | null>(null);
+  const [incidentDescription, setIncidentDescription] = useState("");
+  const [incidentSeverity, setIncidentSeverity] = useState("Medium");
+  const [reportingIncident, setReportingIncident] = useState(false);
+  const [incidentReportMessage, setIncidentReportMessage] = useState<string | null>(null);
+  const [teamIncidents, setTeamIncidents] = useState<TeamIncident[]>([]);
+  const [incidentsRefreshKey, setIncidentsRefreshKey] = useState(0);
+
+  // Independent of the analysis itself (team incidents are a per-repo
+  // concern, not per-PR), so this fetches once per repo rather than
+  // re-running every time `data` changes as enrichment streams in.
+  // incidentsRefreshKey lets reportIncident() below trigger a re-fetch
+  // after a successful submission without calling setState from outside
+  // an effect.
+  useEffect(() => {
+    if (!token) return;
+    const fetchTeamIncidents = async () => {
+      try {
+        const response = await fetch(
+          `${apiBase}/api/analysis/incidents?repository=${encodeURIComponent(`${owner}/${repo}`)}`,
+          { headers: { "Authorization": `Bearer ${token}` } }
+        );
+        if (response.ok) {
+          setTeamIncidents(await response.json());
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    fetchTeamIncidents();
+  }, [token, apiBase, owner, repo, incidentsRefreshKey]);
 
   const saveReviewWorkspace = async () => {
     if (!token || !data) {
@@ -218,6 +248,40 @@ export function PrReviewPanel({
       alert("Error posting comment.");
     } finally {
       setPostingComment(null);
+    }
+  };
+
+  const reportIncident = async () => {
+    if (!token) {
+      alert("Please login via GitHub to report an incident.");
+      return;
+    }
+    if (!incidentDescription.trim()) return;
+
+    setReportingIncident(true);
+    setIncidentReportMessage(null);
+    try {
+      const response = await fetch(`${apiBase}/api/analysis/incidents`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({
+          repository: `${owner}/${repo}`,
+          description: incidentDescription.trim(),
+          severity: incidentSeverity,
+        }),
+      });
+      if (response.ok) {
+        setIncidentDescription("");
+        setIncidentReportMessage("Incident reported — it'll be matched against future PRs in this repo.");
+        setIncidentsRefreshKey((k) => k + 1);
+      } else {
+        setIncidentReportMessage("Failed to report incident.");
+      }
+    } catch (err) {
+      console.error(err);
+      setIncidentReportMessage("Error reporting incident.");
+    } finally {
+      setReportingIncident(false);
     }
   };
 
@@ -681,6 +745,95 @@ export function PrReviewPanel({
                   {(!data.architecture_violations || data.architecture_violations.length === 0) && (
                     <div className={`text-xs ${textSecondary}`}>No architecture violations detected.</div>
                   )}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            {/* Historical Incidents */}
+            <AccordionItem value="incidents" className={boxStyle}>
+              <AccordionTrigger className={`text-sm font-semibold hover:no-underline px-4 py-3 ${headerStyle}`}>
+                <div className="flex items-center gap-2 text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">
+                  <AlertCircle className="h-4 w-4" />
+                  Historical Incidents
+                  {data.similar_incidents?.some((i) => i.similarity_score > 0) && (
+                    <Badge className="ml-2 bg-[var(--color-attention-emphasis,#9a6700)] text-white border-transparent text-[10px] py-0">
+                      {data.similar_incidents.filter((i) => i.similarity_score > 0).length}
+                    </Badge>
+                  )}
+                </div>
+              </AccordionTrigger>
+              <AccordionContent className="p-4 bg-[var(--bgColor-default,var(--color-canvas-default,#010409))] border-t border-[var(--borderColor-default,var(--color-border-default,#30363d))]">
+                <div className="space-y-4">
+                  {data.similar_incidents?.filter((i) => i.similarity_score > 0).map((inc, i) => (
+                    <div key={i} className="bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] rounded-md p-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-semibold text-[var(--color-attention-fg,#d29922)]">{inc.similarity_score}% match</span>
+                      </div>
+                      <div className="text-sm text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] mb-1">{inc.matching_incident}</div>
+                      <div className={`text-xs ${textSecondary}`}>{inc.explanation}</div>
+                    </div>
+                  ))}
+                  {(!data.similar_incidents || data.similar_incidents.every((i) => i.similarity_score === 0)) && (
+                    <div className={`text-xs ${textSecondary}`}>No relevant historical incidents found.</div>
+                  )}
+
+                  <div className="border-t border-[var(--borderColor-default,var(--color-border-default,#30363d))] pt-4 mt-2">
+                    <div className="text-xs font-semibold text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] uppercase tracking-wide mb-2">
+                      Reported for This Repo {teamIncidents.length > 0 && `(${teamIncidents.length})`}
+                    </div>
+                    {teamIncidents.length > 0 ? (
+                      <ul className="space-y-2">
+                        {teamIncidents.map((inc) => (
+                          <li key={inc.incident_id} className="bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] rounded-md p-2.5">
+                            <div className="flex items-center justify-between mb-1">
+                              <Badge variant="outline" className="text-[10px] py-0 border-[var(--borderColor-default,var(--color-border-default,#30363d))]">{inc.severity}</Badge>
+                              <span className={`text-[10px] ${textSecondary}`}>{inc.reported_by ? `by ${inc.reported_by}` : ""} {inc.date}</span>
+                            </div>
+                            <div className="text-xs text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">{inc.description}</div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className={`text-xs ${textSecondary}`}>No team-reported incidents for this repo yet.</div>
+                    )}
+                  </div>
+
+                  <div className="border-t border-[var(--borderColor-default,var(--color-border-default,#30363d))] pt-4 mt-2">
+                    <div className="text-xs font-semibold text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] uppercase tracking-wide mb-2">Report a New Incident</div>
+                    <p className={`text-[11px] ${textSecondary} mb-2`}>
+                      Add a real incident from this repository so future PRs get matched against it too, not just the built-in reference examples.
+                    </p>
+                    <textarea
+                      value={incidentDescription}
+                      onChange={(e) => setIncidentDescription(e.target.value)}
+                      placeholder="What happened, and what caused it?"
+                      rows={3}
+                      className={`${inputStyle} w-full mb-2 resize-none`}
+                    />
+                    <div className="flex gap-2">
+                      <select
+                        value={incidentSeverity}
+                        onChange={(e) => setIncidentSeverity(e.target.value)}
+                        className={`${inputStyle} flex-1 h-9 appearance-none bg-no-repeat pr-8`}
+                        style={selectChevronStyle}
+                      >
+                        <option value="Low">Low</option>
+                        <option value="Medium">Medium</option>
+                        <option value="High">High</option>
+                        <option value="Critical">Critical</option>
+                      </select>
+                      <button
+                        onClick={reportIncident}
+                        disabled={reportingIncident || !incidentDescription.trim()}
+                        className={`flex-1 ${primaryButtonStyle} ${reportingIncident || !incidentDescription.trim() ? "opacity-50 cursor-not-allowed" : ""}`}
+                      >
+                        {reportingIncident ? "Reporting..." : "Report Incident"}
+                      </button>
+                    </div>
+                    {incidentReportMessage && (
+                      <p className={`text-[11px] ${textSecondary} italic mt-2`}>{incidentReportMessage}</p>
+                    )}
+                  </div>
                 </div>
               </AccordionContent>
             </AccordionItem>

@@ -1,8 +1,10 @@
 import chromadb
 from chromadb.config import Settings as ChromaSettings
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from app.core.config import settings
+from datetime import datetime
 import os
+import uuid
 
 def get_chroma_client():
     os.makedirs(settings.CHROMA_DB_DIR, exist_ok=True)
@@ -36,6 +38,65 @@ def init_mock_incidents():
             ids=["INC-001", "INC-002", "INC-003"]
         )
 
+def add_team_incident(repository: str, description: str, severity: str, reported_by: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Lets a team record a real incident from their own repository, instead of
+    similarity matching being limited to the 3 hand-written stub examples
+    forever. Stored in the same ChromaDB collection as those seeded
+    examples (find_similar_incidents' unfiltered query picks it up
+    immediately, no separate wiring needed) - "repository" and
+    "reported_by" are just additional metadata used to attribute it and to
+    list a team's own incidents back to them.
+    """
+    client = get_chroma_client()
+    collection = client.get_or_create_collection(name="incidents")
+
+    incident_id = f"TEAM-{uuid.uuid4().hex[:10]}"
+    date = datetime.utcnow().strftime("%Y-%m-%d")
+    collection.add(
+        documents=[description],
+        metadatas=[{
+            "incident_id": incident_id,
+            "date": date,
+            "severity": severity,
+            "repository": repository,
+            "reported_by": reported_by or "",
+        }],
+        ids=[incident_id],
+    )
+    return {
+        "incident_id": incident_id,
+        "description": description,
+        "severity": severity,
+        "repository": repository,
+        "date": date,
+        "reported_by": reported_by,
+    }
+
+
+def list_team_incidents(repository: str) -> List[Dict[str, Any]]:
+    """Incidents a team added themselves for this specific repository (not
+    the global seeded examples, which have no "repository" metadata to
+    match against)."""
+    client = get_chroma_client()
+    collection = client.get_or_create_collection(name="incidents")
+    results = collection.get(where={"repository": repository})
+
+    incidents = []
+    ids = results.get("ids") or []
+    for i, incident_id in enumerate(ids):
+        meta = results["metadatas"][i]
+        incidents.append({
+            "incident_id": incident_id,
+            "description": results["documents"][i],
+            "severity": meta.get("severity", "Medium"),
+            "repository": meta.get("repository", repository),
+            "date": meta.get("date", ""),
+            "reported_by": meta.get("reported_by") or None,
+        })
+    return incidents
+
+
 def find_similar_incidents(pr_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     client = get_chroma_client()
     collection = client.get_or_create_collection(name="incidents")
@@ -58,10 +119,12 @@ def find_similar_incidents(pr_data: Dict[str, Any]) -> List[Dict[str, Any]]:
             score = max(0, min(100, int((2.0 - distance) * 50)))
             
             if score >= 60:
+                reported_by = meta.get("reported_by")
+                source = f"team-reported by {reported_by}" if reported_by else "reference example"
                 incidents.append({
                     "similarity_score": score,
                     "matching_incident": doc,
-                    "explanation": f"Similar to past incident {meta.get('incident_id')} with severity {meta.get('severity')}"
+                    "explanation": f"Similar to past incident {meta.get('incident_id')} ({source}) with severity {meta.get('severity')}"
                 })
             
     if not incidents:

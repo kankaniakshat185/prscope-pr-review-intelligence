@@ -18,10 +18,14 @@ export function SavedReviewsPanel({
   token,
   apiBase,
   onLogin,
+  owner,
+  repo,
 }: {
   token: string | null;
   apiBase: string;
   onLogin: () => void;
+  owner?: string | null;
+  repo?: string | null;
 }) {
   const [savedReviews, setSavedReviews] = useState<SavedReview[]>([]);
   const [filterStatus, setFilterStatus] = useState("All");
@@ -29,23 +33,36 @@ export function SavedReviewsPanel({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedReview, setSelectedReview] = useState<SavedReview | null>(null);
   const [reviewEvents, setReviewEvents] = useState<ReviewEvent[]>([]);
+  const [teamView, setTeamView] = useState(false);
+  const [teamViewError, setTeamViewError] = useState<string | null>(null);
+
+  const currentRepository = owner && repo ? `${owner}/${repo}` : null;
 
   useEffect(() => {
     if (!token) return;
+    if (teamView && !currentRepository) return; // shouldn't happen - the toggle is only shown when there's a repo
 
     const fetchSavedReviews = async () => {
+      setTeamViewError(null);
       try {
         const q = new URLSearchParams({
           status: filterStatus,
           sort: sortOrder,
-          search: searchQuery
+          search: searchQuery,
         });
+        if (teamView && currentRepository) {
+          q.set("team", "true");
+          q.set("repository", currentRepository);
+        }
         const response = await fetch(`${apiBase}/api/analysis/workspace/reviews?${q.toString()}`, {
           headers: { "Authorization": `Bearer ${token}` }
         });
         if (response.ok) {
           const result = await response.json();
           setSavedReviews(result);
+        } else if (response.status === 403 && teamView) {
+          setSavedReviews([]);
+          setTeamViewError("You don't have any reviews for this repository yet — save one first to unlock the team view.");
         }
       } catch (err) {
         console.error(err);
@@ -53,7 +70,7 @@ export function SavedReviewsPanel({
     };
 
     fetchSavedReviews();
-  }, [token, apiBase, filterStatus, sortOrder, searchQuery]);
+  }, [token, apiBase, filterStatus, sortOrder, searchQuery, teamView, currentRepository]);
 
   const fetchReviewDetails = async (id: number) => {
     try {
@@ -142,6 +159,28 @@ export function SavedReviewsPanel({
 
   return (
     <div className="space-y-4">
+      {currentRepository && (
+        <div className="flex gap-2">
+          <button
+            onClick={() => setTeamView(false)}
+            className={`flex-1 py-1.5 text-xs font-medium rounded-md border transition-colors ${!teamView ? "bg-[var(--bgColor-neutral-muted,var(--color-neutral-muted,#21262d))] text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] border-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))]" : "bg-transparent text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] border-transparent hover:bg-[var(--bgColor-neutral-muted,var(--color-neutral-muted,#21262d))]"}`}
+          >
+            My Reviews
+          </button>
+          <button
+            onClick={() => setTeamView(true)}
+            title={`Everyone's saved reviews for ${currentRepository}`}
+            className={`flex-1 py-1.5 text-xs font-medium rounded-md border transition-colors ${teamView ? "bg-[var(--bgColor-neutral-muted,var(--color-neutral-muted,#21262d))] text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] border-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))]" : "bg-transparent text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] border-transparent hover:bg-[var(--bgColor-neutral-muted,var(--color-neutral-muted,#21262d))]"}`}
+          >
+            Team Reviews ({currentRepository})
+          </button>
+        </div>
+      )}
+      {teamViewError && (
+        <div className="text-xs text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] rounded-md p-3">
+          {teamViewError}
+        </div>
+      )}
       <div className="flex gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-2.5 top-2 h-4 w-4 text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))]" />
@@ -195,6 +234,7 @@ export function SavedReviewsPanel({
                 Risk: {r.risk_score}
               </span>
               <span>Reviewed: {r.last_reviewed_at ? new Date(r.last_reviewed_at).toLocaleDateString() : "N/A"}</span>
+              {teamView && r.author_username && <span>by {r.author_username}</span>}
             </div>
           </div>
         ))}

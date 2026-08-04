@@ -7,6 +7,7 @@ from app.models.pr import SessionLocal, User, SavedReview, ReviewEvent, RepoInde
 from app.schemas.pr import (
     PRAnalysisRequest, PRDeterministicResponse, PREnrichmentResponse,
     PostCommentRequest, PostStatusRequest, RepoIndexRequest, RepoIndexStatusResponse,
+    IncidentCreate, IncidentResponse,
     SavedReviewCreate, SavedReviewResponse, ReviewEventResponse
 )
 from app.services.github import fetch_pr_data, fetch_architecture_rules, fetch_pr_head_sha
@@ -18,7 +19,7 @@ from app.services.symbols_analysis import analyze_symbols
 from app.services.github_comments import post_review_comment
 from app.services.impact_analysis import analyze_impact
 from app.services.architecture import validate_architecture
-from app.services.incident_similarity import find_similar_incidents
+from app.services.incident_similarity import find_similar_incidents, add_team_incident, list_team_incidents
 from app.services.security_engine import analyze_security
 from app.services.dependency_engine import build_dependency_graph
 from app.services.complexity_engine import compute_function_complexities
@@ -408,8 +409,42 @@ def get_repo_index_status(repo_url: str, user_id: int = Depends(verify_token), d
     )
 
 # ==================================================
+# TEAM INCIDENTS
+# ==================================================
+
+@router.post("/incidents", response_model=IncidentResponse)
+def report_incident(payload: IncidentCreate, user_id: int = Depends(verify_token), db: Session = Depends(get_db)):
+    """
+    Lets a team record a real incident from their own repository, so
+    find_similar_incidents() isn't limited to the 3 hand-written stub
+    examples forever - added incidents are picked up by that same search
+    immediately (see incident_similarity.py).
+    """
+    if not payload.description.strip():
+        raise HTTPException(status_code=400, detail="description is required")
+    user = db.query(User).filter(User.id == user_id).first()
+    return add_team_incident(
+        repository=payload.repository,
+        description=payload.description,
+        severity=payload.severity,
+        reported_by=user.username if user else None,
+    )
+
+
+@router.get("/incidents", response_model=list[IncidentResponse])
+def get_team_incidents(repository: str, user_id: int = Depends(verify_token)):
+    return list_team_incidents(repository)
+
+
+# ==================================================
 # SAVED REVIEWS WORKSPACE
 # ==================================================
+
+def _user_has_reviewed_repo(db: Session, user_id: int, repository: str) -> bool:
+    return db.query(SavedReview).filter(
+        SavedReview.user_id == user_id, SavedReview.repository == repository
+    ).first() is not None
+
 
 @router.post("/workspace/reviews", response_model=SavedReviewResponse)
 def save_review(review: SavedReviewCreate, user_id: int = Depends(verify_token), db: Session = Depends(get_db)):
@@ -456,13 +491,31 @@ def save_review(review: SavedReviewCreate, user_id: int = Depends(verify_token),
 
 @router.get("/workspace/reviews")
 def get_saved_reviews(
-    user_id: int = Depends(verify_token), 
+    user_id: int = Depends(verify_token),
     db: Session = Depends(get_db),
     status: str = None,
     sort: str = "newest", # newest, oldest, highest_risk, lowest_risk
-    search: str = None
+    search: str = None,
+    repository: str = None,
+    team: bool = False,
 ):
-    query = db.query(SavedReview).filter(SavedReview.user_id == user_id)
+    """
+    team=true switches from "my reviews" to "everyone's reviews for this
+    repository" - there's no separate team/org membership model, so access
+    is gated on the requester already having at least one review of their
+    own there (proof they've successfully analyzed it through PRScope
+    before) rather than on a real team-membership check.
+    """
+    if team:
+        if not repository:
+            raise HTTPException(status_code=400, detail="repository is required when team=true")
+        if not _user_has_reviewed_repo(db, user_id, repository):
+            raise HTTPException(status_code=403, detail="You don't have any reviews for this repository yet.")
+        query = db.query(SavedReview).filter(SavedReview.repository == repository)
+    else:
+        query = db.query(SavedReview).filter(SavedReview.user_id == user_id)
+        if repository:
+            query = query.filter(SavedReview.repository == repository)
 
     if status and status != "All":
         query = query.filter(SavedReview.review_status == status)
@@ -485,21 +538,40 @@ def get_saved_reviews(
         query = query.order_by(SavedReview.risk_score.asc())
 
     reviews = query.all()
+
+    if team:
+        usernames = {
+            u.id: u.username
+            for u in db.query(User).filter(User.id.in_({r.user_id for r in reviews})).all()
+        }
+        return [
+            {
+                "id": r.id, "user_id": r.user_id, "repository": r.repository,
+                "repository_owner": r.repository_owner, "repository_name": r.repository_name,
+                "pr_number": r.pr_number, "pr_title": r.pr_title, "pr_url": r.pr_url,
+                "risk_score": r.risk_score, "risk_category": r.risk_category,
+                "executive_summary": r.executive_summary, "review_status": r.review_status,
+                "review_notes": r.review_notes, "created_at": r.created_at, "updated_at": r.updated_at,
+                "last_reviewed_at": r.last_reviewed_at, "author_username": usernames.get(r.user_id),
+            }
+            for r in reviews
+        ]
+
     return reviews
 
 @router.get("/workspace/reviews/{review_id}", response_model=SavedReviewResponse)
 def get_review_detail(review_id: int, user_id: int = Depends(verify_token), db: Session = Depends(get_db)):
-    review = db.query(SavedReview).filter(SavedReview.id == review_id, SavedReview.user_id == user_id).first()
-    if not review:
+    review = db.query(SavedReview).filter(SavedReview.id == review_id).first()
+    if not review or (review.user_id != user_id and not _user_has_reviewed_repo(db, user_id, review.repository)):
         raise HTTPException(status_code=404, detail="Review not found")
     return review
 
 @router.get("/workspace/reviews/{review_id}/events", response_model=list[ReviewEventResponse])
 def get_review_events(review_id: int, user_id: int = Depends(verify_token), db: Session = Depends(get_db)):
-    review = db.query(SavedReview).filter(SavedReview.id == review_id, SavedReview.user_id == user_id).first()
-    if not review:
+    review = db.query(SavedReview).filter(SavedReview.id == review_id).first()
+    if not review or (review.user_id != user_id and not _user_has_reviewed_repo(db, user_id, review.repository)):
         raise HTTPException(status_code=404, detail="Review not found")
-    
+
     events = db.query(ReviewEvent).filter(ReviewEvent.review_id == review_id).order_by(ReviewEvent.timestamp.desc()).all()
     return events
 

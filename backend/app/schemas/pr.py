@@ -66,6 +66,19 @@ class RepoIndexStatusResponse(BaseModel):
     function_count: int = 0
     error_message: Optional[str] = None
 
+class IncidentCreate(BaseModel):
+    repository: str
+    description: str
+    severity: str = "Medium"
+
+class IncidentResponse(BaseModel):
+    incident_id: str
+    description: str
+    severity: str
+    repository: str
+    date: str
+    reported_by: Optional[str] = None
+
 class SavedReviewCreate(BaseModel):
     repository: str
     repository_owner: str
@@ -85,6 +98,7 @@ class SavedReviewResponse(SavedReviewCreate):
     created_at: datetime
     updated_at: datetime
     last_reviewed_at: Optional[datetime]
+    author_username: Optional[str] = None  # populated only in the team-shared view (?team=true)
 
     class Config:
         orm_mode = True

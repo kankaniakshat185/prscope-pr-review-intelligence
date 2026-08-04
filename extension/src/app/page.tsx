@@ -194,7 +194,7 @@ function MainDashboard() {
       )}
 
       {activeTab === "SAVED_REVIEWS" && (
-        <SavedReviewsPanel token={token} apiBase={API_BASE} onLogin={loginWithGitHub} />
+        <SavedReviewsPanel token={token} apiBase={API_BASE} onLogin={loginWithGitHub} owner={owner} repo={repo} />
       )}
     </div>
   );
