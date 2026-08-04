@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     GITHUB_CLIENT_SECRET: str = ""
     GITHUB_WEBHOOK_SECRET: str = ""
 
+    # How long the webhook receiver waits after the *last* pull_request
+    # event for a given PR before actually running analysis. A quick series
+    # of pushes fires several `synchronize` events in a row; without this,
+    # each would trigger its own full analysis run instead of one run
+    # reflecting the final state.
+    WEBHOOK_DEBOUNCE_SECONDS: float = 30.0
+
     # Required: no default. Startup fails if this isn't set, by design —
     # a hardcoded fallback here previously meant every deployment signed
     # JWTs with a secret visible in the public repo.

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { AlertCircle, CheckCircle, ShieldAlert, Layout, Code2, ClipboardCopy, GitPullRequest, Save, Send, Link as LinkIcon, Network } from "lucide-react";
+import { AlertCircle, CheckCircle, ShieldAlert, Layout, Code2, ClipboardCopy, GitPullRequest, GitCommit, Save, Send, Link as LinkIcon, Network } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import DependencyGraph from "@/components/DependencyGraph";
@@ -97,6 +97,7 @@ export function PrReviewPanel({
   const [noteText, setNoteText] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
   const [postingComment, setPostingComment] = useState<string | null>(null);
+  const [postingStatus, setPostingStatus] = useState(false);
 
   const saveReviewWorkspace = async () => {
     if (!token || !data) {
@@ -174,6 +175,52 @@ export function PrReviewPanel({
     }
   };
 
+  const publishStatusToGithub = async () => {
+    if (!token) {
+      alert("Please login via GitHub to publish a status.");
+      return;
+    }
+    const githubToken = localStorage.getItem("prscope_github_token");
+    if (!githubToken) {
+      alert("Please provide your GitHub Personal Access Token in Settings to publish a status.");
+      return;
+    }
+    if (!data) return;
+
+    // Deterministic fields only, so this works before AI enrichment finishes -
+    // it's the same verdict logic already shown in the Recommended Action card.
+    const decision = getReviewDecision(data);
+    const state = decision.status === "REQUEST CHANGES" ? "failure" : decision.status === "NEEDS REVIEW" ? "pending" : "success";
+
+    setPostingStatus(true);
+    try {
+      const response = await fetch(`${apiBase}/api/analysis/post-status`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          repo_url: `https://github.com/${owner}/${repo}`,
+          pr_number: parseInt(pr, 10),
+          state,
+          description: `PRScope: ${decision.status} - ${decision.reason}`,
+          github_token: githubToken
+        }),
+      });
+      if (response.ok) {
+        alert("Status published to GitHub - check the PR's Checks section.");
+      } else {
+        alert("Failed to publish status.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error publishing status.");
+    } finally {
+      setPostingStatus(false);
+    }
+  };
+
   const copySnapshot = () => {
     if (!data || data.executive_summary === undefined) return; // AI content not ready yet
     const securityTxt = data.security_findings?.length > 0
@@ -241,6 +288,15 @@ export function PrReviewPanel({
             >
               <ClipboardCopy className="h-4 w-4" />
               Copy Snapshot
+            </button>
+            <button
+              onClick={publishStatusToGithub}
+              disabled={postingStatus}
+              title="Publish the risk verdict as a commit status, visible in the PR's GitHub Checks section"
+              className={`flex-1 flex items-center justify-center gap-2 ${buttonStyle} whitespace-nowrap ${postingStatus ? "opacity-50 cursor-not-allowed" : ""}`}
+            >
+              <GitCommit className="h-4 w-4" />
+              {postingStatus ? "Publishing..." : "Publish Status"}
             </button>
             {data.pr_type && (
               <div className={`flex-1 flex items-center justify-center px-3 py-1.5 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] rounded-md text-sm whitespace-nowrap`}>

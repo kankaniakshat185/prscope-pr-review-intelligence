@@ -35,3 +35,16 @@ def test_login_endpoint_refuses_to_offer_mock_url_when_disabled_and_unconfigured
 def test_saved_reviews_require_auth(client):
     r = client.get("/api/analysis/workspace/reviews")
     assert r.status_code == 403
+
+
+def test_post_comment_requires_auth(client):
+    r = client.post("/api/analysis/post-comment", json={"repo_url": "https://github.com/x/y", "pr_number": 1, "comment_body": "hi"})
+    assert r.status_code == 403
+
+
+def test_post_status_requires_auth(client):
+    r = client.post(
+        "/api/analysis/post-status",
+        json={"repo_url": "https://github.com/x/y", "pr_number": 1, "state": "success", "description": "d"},
+    )
+    assert r.status_code == 403

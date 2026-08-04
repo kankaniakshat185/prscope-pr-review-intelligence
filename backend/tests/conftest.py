@@ -22,6 +22,19 @@ def _reset_rate_limiter():
     analyze_rate_limiter.reset()
 
 
+@pytest.fixture(autouse=True)
+def _reset_webhook_debouncer():
+    # Also process-global, in-memory state - a task scheduled by one test's
+    # webhook payload (same owner/repo/PR number across several tests, e.g.
+    # "o/r#1") would otherwise still be pending (bound to that test's own,
+    # by-then-closed TestClient event loop) when the next test schedules
+    # against the same key.
+    from app.api.endpoints import webhook_debouncer
+    webhook_debouncer.reset()
+    yield
+    webhook_debouncer.reset()
+
+
 @pytest.fixture
 def client():
     # Use TestClient as a context manager so FastAPI's startup event actually

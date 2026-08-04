@@ -22,16 +22,19 @@ Architecture boundary rules (`.prscope.yml`) use the same approach: real AST-bas
 Supports highly customized, repository-specific architectural rules. The engine dynamically fetches and parses `.prscope.yml` definitions from the target repository root, allowing engineering teams to enforce strict, bespoke module boundaries and import restrictions on a per-project basis.
 
 ### Causal Dependency Mapping & Visualization
-Parses the diff to build a best-effort call graph for **Python files** and renders it as a visual dependency graph in the Chrome Extension UI. The graph is built from diff context only (not the full file or full repository), so accuracy is naturally limited to what's visible in the patch, and non-Python files currently don't produce a dependency graph.
+For **Python files**, fetches the real base and head commit content for each changed file from the GitHub Contents API and builds a call graph from the actual file (not a diff-hunk reconstruction), rendered as a visual dependency graph in the Chrome Extension UI. Because the whole file is parsed, calls made from or to code the diff didn't touch are captured correctly too — not just what's visible in the patch. This is still per-file, single-PR scope, not a full-repository index, so a caller in a different file won't show up (that requires a persisted, repo-wide call-graph index, which is a known limitation, not yet built). If content can't be fetched (rate limits, huge PRs, deleted files) it falls back to the old diff-fragment reconstruction. Non-Python files currently don't produce a dependency graph.
 
 ### Stateful Review Generation
 Cross-references the pull request diff against provided Jira/Linear ticket context to ensure strict adherence to business requirements. Generates highly contextual, actionable inline comments that can be directly submitted to the GitHub timeline via the extension UI.
 
+### GitHub Commit Status Publishing
+The extension's "Publish Status" button posts the deterministic risk verdict (Approve / Needs Review / Request Changes) as a commit status on the PR's head commit via GitHub's Statuses API, so it shows up directly in the PR's own **Checks** section — not just inside the extension. This is a deliberately separate, explicit action from running an analysis, so `/analyze` never silently writes to a repository the caller doesn't intend to; it requires both a PRScope login and a GitHub Personal Access Token with `repo:status` scope (configured the same way as the existing inline-comment posting). Uses the Statuses API rather than the newer Checks API on purpose — Checks requires registering PRScope as a GitHub App with an installation-token flow, which is a larger undertaking than a PAT-based status; the tradeoff is a plainer single-line status instead of rich inline annotations.
+
 ### Bring Your Own Key (BYOK) Architecture
 Users can bypass the shared API quota pool by supplying their own Gemini or OpenAI API key, persisted in the browser's local storage. Note this storage is **not encrypted** — treat it like any other locally-cached credential, and prefer a scoped/limited-privilege key where possible.
 
-### GitHub Webhook Ingestion (signature-verified, foundation only)
-The FastAPI backend exposes a signature-verified `pull_request` webhook receiver (`opened`, `synchronize`, `reopened`), gated by `GITHUB_WEBHOOK_SECRET`. Requests without a valid `X-Hub-Signature-256` are rejected outright. Today it validates and logs the event; it does not yet dispatch analysis automatically. It's built as the foundation for future CI/CD-triggered background analysis (e.g. via a task queue), not a shipped feature yet.
+### GitHub Webhook Ingestion (signature-verified, CI-style automated analysis)
+The FastAPI backend exposes a signature-verified `pull_request` webhook receiver (`opened`, `synchronize`, `reopened`), gated by `GITHUB_WEBHOOK_SECRET`. Requests without a valid `X-Hub-Signature-256` are rejected outright. A valid event schedules a deterministic analysis run, debounced per PR (`WEBHOOK_DEBOUNCE_SECONDS`, default 30s): a quick series of pushes fires several `synchronize` events in a row, and each new event for the same PR restarts that PR's timer instead of queuing its own run, so only the last push within the window actually gets analyzed. Once that run completes, the risk verdict is published back to GitHub as a commit status (via `settings.GITHUB_TOKEN` — there's no per-user PAT in a webhook context), the same mechanism described above under GitHub Commit Status Publishing. This makes the webhook a real (if lightweight) CI check: no task queue, no separate worker process — the debounce timer and the analysis both run as an `asyncio` task inside the same backend process, which is a reasonable tradeoff for one instance but wouldn't coordinate correctly across multiple backend replicas without a shared store.
 
 ### Resilient Inference & Rate Limit Handling
 The LLM service layer implements robust exception boundaries to handle upstream API quotas gracefully, with bounded timeouts, retry-with-backoff (both providers), and thread-pool offloading so a slow provider response can't stall the whole API process. If global rate limits (HTTP 429) are exceeded, the platform automatically degrades into a deterministic heuristic mode, ensuring risk scores and dependency graphs are reliably delivered even during inference outages.
@@ -67,7 +70,7 @@ graph TD
         API[Analysis API<br/>requires bearer token · split: fast /analyze + slower /analyze/enrich]
         Engines[Deterministic Engines<br/>risk · reviewability · security ·<br/>architecture · dependency graph · symbols]
         LLMSvc[LLM Service<br/>thread-pool offloaded, timeout-bounded]
-        Webhook[Webhook Receiver<br/>HMAC-SHA256 verified · foundation only]
+        Webhook[Webhook Receiver<br/>HMAC-SHA256 verified · debounced auto-analysis]
     end
 
     subgraph Data [Persistence]
@@ -76,7 +79,7 @@ graph TD
     end
 
     subgraph External [External Services]
-        GH[GitHub REST API<br/>OAuth, PR data, issue comments]
+        GH[GitHub REST API<br/>OAuth, PR data, issue comments, commit statuses]
         Gemini[Google Gemini API]
         OpenAI[OpenAI API]
     end
@@ -90,14 +93,17 @@ graph TD
     Auth -->|OAuth code exchange| GH
     Auth --> DB
     API --> Engines
-    Engines -->|fetch PR diff & files| GH
+    Engines -->|fetch PR diff, files & base/head content| GH
+    API -->|post comments & commit statuses, user-supplied PAT| GH
     Engines --> Chroma
     API --> LLMSvc
     LLMSvc --> Gemini
     LLMSvc --> OpenAI
     API --> DB
 
-    GH -.->|pull_request events, unwired to analysis yet| Webhook
+    GH -->|pull_request events| Webhook
+    Webhook -->|debounced| Engines
+    Webhook -->|risk verdict as commit status| GH
 ```
 
 ## Usage Guide

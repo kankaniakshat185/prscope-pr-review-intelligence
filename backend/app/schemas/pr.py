@@ -46,6 +46,14 @@ class PostCommentRequest(BaseModel):
     comment_body: str
     github_token: Optional[str] = None
 
+class PostStatusRequest(BaseModel):
+    repo_url: str
+    pr_number: int
+    state: str  # "success" | "failure" | "error" | "pending"
+    description: str
+    target_url: Optional[str] = None
+    github_token: Optional[str] = None
+
 class SavedReviewCreate(BaseModel):
     repository: str
     repository_owner: str

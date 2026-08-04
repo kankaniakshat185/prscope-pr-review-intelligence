@@ -6,9 +6,10 @@ from sqlalchemy.orm import Session
 from app.models.pr import SessionLocal, User, SavedReview, ReviewEvent
 from app.schemas.pr import (
     PRAnalysisRequest, PRDeterministicResponse, PREnrichmentResponse,
-    PostCommentRequest, SavedReviewCreate, SavedReviewResponse, ReviewEventResponse
+    PostCommentRequest, PostStatusRequest, SavedReviewCreate, SavedReviewResponse, ReviewEventResponse
 )
-from app.services.github import fetch_pr_data, fetch_architecture_rules
+from app.services.github import fetch_pr_data, fetch_architecture_rules, fetch_pr_head_sha
+from app.services.github_status import post_commit_status
 from app.services.risk_engine import calculate_risk
 from app.services.context_builder import build_pr_context
 from app.services.llm import generate_review_checklist, generate_review_comments, generate_executive_summary, extract_jira_context, explain_security_finding
@@ -23,6 +24,7 @@ from app.services.complexity_engine import compute_function_complexities
 from app.services.reviewability_engine import calculate_reviewability
 from app.services.auth import create_access_token, verify_token
 from app.services.rate_limiter import rate_limited_user
+from app.services.webhook_debouncer import WebhookDebouncer
 from app.core.config import settings
 from datetime import datetime
 import asyncio
@@ -418,9 +420,32 @@ def get_review_events(review_id: int, user_id: int = Depends(verify_token), db: 
 
 
 @router.post("/post-comment")
-async def post_comment(req: PostCommentRequest):
+async def post_comment(req: PostCommentRequest, user_id: int = Depends(verify_token)):
     try:
         res = await post_review_comment(req.repo_url, req.pr_number, req.comment_body, req.github_token)
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/post-status")
+async def post_status(req: PostStatusRequest, user_id: int = Depends(verify_token)):
+    """
+    Publishes a commit status (visible in the PR's GitHub "Checks" section)
+    reflecting a risk verdict computed from the deterministic analysis -
+    a separate, explicit action from /analyze itself so running an analysis
+    never silently writes to a repo the caller doesn't intend to.
+    """
+    try:
+        sha = await fetch_pr_head_sha(req.repo_url, req.pr_number)
+        res = await post_commit_status(
+            repo_url=req.repo_url,
+            sha=sha,
+            state=req.state,
+            description=req.description,
+            target_url=req.target_url,
+            github_token=req.github_token,
+        )
         return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -430,11 +455,61 @@ async def post_comment(req: PostCommentRequest):
 # ==================================================
 from fastapi import Request
 
+webhook_debouncer = WebhookDebouncer(delay_seconds=settings.WEBHOOK_DEBOUNCE_SECONDS)
+
 def _verify_webhook_signature(secret: str, body: bytes, signature_header: str) -> bool:
     if not signature_header or not signature_header.startswith("sha256="):
         return False
     expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature_header)
+
+
+def _webhook_status_from_result(result: Dict[str, Any]) -> tuple:
+    """
+    Maps a deterministic analysis result to a commit-status (state,
+    description) pair. A simpler, server-side cousin of the extension's
+    getReviewDecision - there's no logged-in user or "needs test coverage"
+    signal available in a webhook-triggered run, just the same underlying
+    risk score / security findings / architecture violations.
+    """
+    risk = result["risk_score"]
+    score = risk.get("score", 0)
+    security_findings = result["security_findings"]
+    arch_violations = result["arch_violations"]
+    is_critical_sec = any(f.get("severity") == "Critical" for f in security_findings)
+
+    if is_critical_sec or security_findings:
+        return "failure", f"PRScope: {len(security_findings)} security finding(s) detected."
+    if score >= 7:
+        return "failure", f"PRScope: High risk ({score}/10) - review recommended before merge."
+    if arch_violations:
+        return "failure", f"PRScope: {len(arch_violations)} architecture violation(s) detected."
+    if score >= 4:
+        return "pending", f"PRScope: Moderate risk ({score}/10) - manual verification recommended."
+    return "success", f"PRScope: Low risk ({score}/10). No security or architecture concerns."
+
+
+async def _analyze_and_publish_status(repo_url: str, pr_number: int) -> None:
+    """
+    The actual work a debounced webhook event runs: a full deterministic
+    analysis, then a commit status reflecting the verdict - using the
+    shared server-side GITHUB_TOKEN, since there's no per-user PAT in a
+    webhook context. Runs unattended (no request to report back to), so
+    failures are logged rather than raised.
+    """
+    try:
+        pr_data = await fetch_pr_data(repo_url, pr_number)
+        result = await _run_deterministic_pipeline(pr_data, None)
+        state, description = _webhook_status_from_result(result)
+        await post_commit_status(
+            repo_url=repo_url,
+            sha=pr_data["head_sha"],
+            state=state,
+            description=description,
+        )
+    except Exception as e:
+        print(f"Webhook-triggered analysis failed for {repo_url}#{pr_number}: {e}")
+
 
 @router.post("/webhook/github")
 async def github_webhook(request: Request):
@@ -461,9 +536,13 @@ async def github_webhook(request: Request):
             pr_number = payload["pull_request"]["number"]
             owner = payload["repository"]["owner"]["login"]
             repo = payload["repository"]["name"]
-            
-            # Fire and forget analysis
-            # In a real app we'd dispatch to a task queue like Celery here
-            print(f"Received webhook for {owner}/{repo} PR #{pr_number}")
-            
+            repo_url = payload["repository"].get("html_url") or f"https://github.com/{owner}/{repo}"
+
+            # Debounced, not fire-and-forget-per-event: a quick series of
+            # pushes fires several `synchronize` events for the same PR, and
+            # each restarts this key's timer - only the last one within the
+            # debounce window actually triggers analysis.
+            key = f"{owner}/{repo}#{pr_number}"
+            webhook_debouncer.schedule(key, lambda: _analyze_and_publish_status(repo_url, pr_number))
+
     return {"status": "received"}
