@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Security
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import String
 from sqlalchemy.orm import Session
 from app.models.pr import SessionLocal, PRAnalysisResult, ReviewNote, User, SavedReview, ReviewEvent
@@ -23,6 +24,8 @@ from app.core.config import settings
 from datetime import datetime
 import json
 import httpx
+import hashlib
+import hmac
 
 router = APIRouter()
 
@@ -40,14 +43,22 @@ def get_db():
 @router.get("/auth/github/login")
 def github_login():
     if not settings.GITHUB_CLIENT_ID:
-        return {"url": "http://localhost:8000/api/analysis/auth/github/callback?code=mock"}
-    
+        if settings.ENABLE_MOCK_AUTH:
+            return {"url": "http://localhost:8000/api/analysis/auth/github/callback?code=mock"}
+        raise HTTPException(
+            status_code=503,
+            detail="GitHub OAuth is not configured (GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET). "
+                   "For local development without a GitHub OAuth app, set ENABLE_MOCK_AUTH=true."
+        )
+
     redirect_uri = f"https://github.com/login/oauth/authorize?client_id={settings.GITHUB_CLIENT_ID}&scope=read:user user:email"
     return {"url": redirect_uri}
 
 @router.get("/auth/github/callback")
 async def github_callback(code: str, db: Session = Depends(get_db)):
     if code == "mock":
+        if not settings.ENABLE_MOCK_AUTH:
+            raise HTTPException(status_code=403, detail="Mock authentication is disabled.")
         github_id = "123456"
         username = "dev_reviewer"
         avatar_url = "https://github.com/ghost.png"
@@ -71,7 +82,8 @@ async def github_callback(code: str, db: Session = Depends(get_db)):
             access_token = token_data.get("access_token")
             
             if not access_token:
-                raise HTTPException(status_code=400, detail=f"Failed to get access token from GitHub: {token_data}. Secret len: {len(client_secret_val)}, ID len: {len(client_id_val)}")
+                print(f"GitHub OAuth token exchange failed: {token_data}")
+                raise HTTPException(status_code=400, detail="Failed to authenticate with GitHub. Please try again.")
                 
             # 2. Fetch user profile
             user_res = await client.get(
@@ -131,7 +143,7 @@ async def github_callback(code: str, db: Session = Depends(get_db)):
 # ==================================================
 
 @router.post("/analyze", response_model=PRAnalysisResponse)
-async def analyze_pr(request: PRAnalysisRequest):
+async def analyze_pr(request: PRAnalysisRequest, user_id: int = Depends(verify_token)):
     from app.services.context_builder import classify_pr
     
     try:
@@ -171,8 +183,10 @@ async def analyze_pr(request: PRAnalysisRequest):
         if not is_docs_pr:
             raw_findings = analyze_security(pr_data.get('files', []))
             # Enrich with Gemini Explanations
+            # (offloaded to a thread pool: explain_security_finding makes a
+            # blocking HTTP call and must not run directly on the event loop)
             for finding in raw_findings:
-                enriched = explain_security_finding(finding, active_key, provider)
+                enriched = await run_in_threadpool(explain_security_finding, finding, active_key, provider)
                 security_findings.append(enriched)
                 
         # 5. Architecture & Similarity
@@ -203,10 +217,12 @@ async def analyze_pr(request: PRAnalysisRequest):
         pr_context = build_pr_context(pr_data, risk_score, impact, arch_violations)
         
         # 9. LLM Generators
-        checklist = generate_review_checklist(pr_context, active_key, provider)
-        comments = generate_review_comments(pr_context, active_key, provider)
-        exec_summary = generate_executive_summary(pr_context, active_key, provider)
-        jira_context = extract_jira_context(pr_data, active_key, provider)
+        # (each makes a blocking HTTP call; run_in_threadpool keeps the event
+        # loop free for other requests instead of stalling the whole server)
+        checklist = await run_in_threadpool(generate_review_checklist, pr_context, active_key, provider)
+        comments = await run_in_threadpool(generate_review_comments, pr_context, active_key, provider)
+        exec_summary = await run_in_threadpool(generate_executive_summary, pr_context, active_key, provider)
+        jira_context = await run_in_threadpool(extract_jira_context, pr_data, active_key, provider)
 
         return PRAnalysisResponse(
             risk_score=risk_score,
@@ -374,10 +390,28 @@ def get_history(repo_url: str, db: Session = Depends(get_db)):
 # ==================================================
 from fastapi import Request
 
+def _verify_webhook_signature(secret: str, body: bytes, signature_header: str) -> bool:
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+    expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature_header)
+
 @router.post("/webhook/github")
 async def github_webhook(request: Request):
+    body = await request.body()
+
+    if not settings.GITHUB_WEBHOOK_SECRET:
+        # Fail closed: an unconfigured secret must not be treated as "accept
+        # anything". Set GITHUB_WEBHOOK_SECRET (and configure the same value
+        # on the GitHub webhook) before pointing a real webhook at this route.
+        raise HTTPException(status_code=503, detail="Webhook receiver is not configured (GITHUB_WEBHOOK_SECRET is unset).")
+
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    if not _verify_webhook_signature(settings.GITHUB_WEBHOOK_SECRET, body, signature):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
     try:
-        payload = await request.json()
+        payload = json.loads(body)
     except Exception:
         return {"status": "error", "message": "Invalid JSON"}
 

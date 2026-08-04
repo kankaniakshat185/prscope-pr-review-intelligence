@@ -11,3 +11,4 @@ pyyaml
 httpx
 python-dotenv
 PyJWT
+pytest

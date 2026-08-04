@@ -97,11 +97,16 @@ function MainDashboard() {
       setToken(storedToken);
       if (storedUser) setUser(JSON.parse(storedUser));
     }
+  }, []);
 
-    if (owner && repo && pr) {
+  useEffect(() => {
+    // Analysis requires a login (the backend requires a bearer token on /analyze).
+    // Runs once the token from storage above is available, and again immediately
+    // after a fresh login.
+    if (owner && repo && pr && token) {
       fetchAnalysis(owner, repo, pr);
     }
-  }, [owner, repo, pr]);
+  }, [owner, repo, pr, token]);
 
   useEffect(() => {
     if (activeTab === "SAVED_REVIEWS" && token) {
@@ -123,7 +128,7 @@ function MainDashboard() {
         localStorage.setItem("prscope_user", JSON.stringify(mockData.user));
       } else {
         const popup = window.open(data.url, "github_oauth", "width=600,height=600");
-        const messageListener = (event) => {
+        const messageListener = (event: MessageEvent) => {
           if (event.data && event.data.access_token) {
             setToken(event.data.access_token);
             setUser(event.data.user);
@@ -147,12 +152,19 @@ function MainDashboard() {
   };
 
   const fetchAnalysis = async (owner: string, repo: string, pr: string) => {
+    if (!token) {
+      setError("Please login with GitHub to analyze this pull request.");
+      return;
+    }
     setLoading(true);
     setError("");
     try {
       const response = await fetch(`${API_BASE}/api/analysis/analyze`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           repo_url: `https://github.com/${owner}/${repo}`,
           pr_number: parseInt(pr, 10),
@@ -374,6 +386,21 @@ function MainDashboard() {
               Login with GitHub
             </button>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  if (!token) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[var(--bgColor-default,var(--color-canvas-default,#010409))] text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]" style={{ fontFamily: "ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji'" }}>
+        <div className="text-center p-6 border border-[var(--borderColor-default,var(--color-border-default,#30363d))] rounded-md bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))]">
+          <ShieldAlert className="mx-auto h-12 w-12 text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] mb-4" />
+          <h2 className="text-lg font-semibold">Login Required</h2>
+          <p className="text-sm text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] mt-2">Login with GitHub to analyze this pull request.</p>
+          <button onClick={loginWithGitHub} className="mt-4 bg-[#1f7530] text-white px-4 py-2 rounded-md text-sm font-medium border border-[rgba(240,246,252,0.1)] hover:bg-[#1a6825] flex items-center gap-2 mx-auto">
+            Login with GitHub
+          </button>
         </div>
       </div>
     );
@@ -658,7 +685,7 @@ function MainDashboard() {
               )}
 
               {/* Accordions Container */}
-              <Accordion type="multiple" className="w-full space-y-3" defaultValue={["executive_summary"]}>
+              <Accordion multiple className="w-full space-y-3" defaultValue={["executive_summary"]}>
 
                 {/* 3. Security Findings */}
                 <AccordionItem value="security" className={boxStyle}>

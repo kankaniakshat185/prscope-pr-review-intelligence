@@ -8,14 +8,17 @@ const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
   ssr: false,
 });
 
+type GraphNode = { id: string; name: string; val: number; color: string };
+type GraphLink = { source: string; target: string };
+
 export default function DependencyGraph({ graphData }: { graphData: any }) {
-  const [data, setData] = useState({ nodes: [], links: [] });
+  const [data, setData] = useState<{ nodes: GraphNode[]; links: GraphLink[] }>({ nodes: [], links: [] });
 
   useEffect(() => {
     if (!graphData || !graphData.modified_functions) return;
 
-    const nodesMap = new Map();
-    const links = [];
+    const nodesMap = new Map<string, GraphNode>();
+    const links: GraphLink[] = [];
 
     // Add nodes and edges
     graphData.modified_functions.forEach((func: any) => {

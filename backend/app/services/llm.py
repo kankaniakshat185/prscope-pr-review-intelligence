@@ -20,7 +20,7 @@ def generate_content(prompt: str, api_key: str = None, provider: str = "gemini")
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.1
             }
-            response = requests.post(url, headers=headers, json=data)
+            response = requests.post(url, headers=headers, json=data, timeout=30)
             if response.status_code == 200:
                 res_json = response.json()
                 return res_json['choices'][0]['message']['content']
@@ -30,6 +30,9 @@ def generate_content(prompt: str, api_key: str = None, provider: str = "gemini")
             else:
                 print(f"Error generating content (OpenAI): {response.text}")
                 return ""
+        except requests.exceptions.Timeout:
+            print("Timed out waiting for OpenAI API")
+            return ""
         except Exception as e:
             print(f"Error generating content (OpenAI): {e}")
             return ""
@@ -47,7 +50,13 @@ def generate_content(prompt: str, api_key: str = None, provider: str = "gemini")
             }
             
             for attempt in range(3):
-                response = requests.post(url, headers=headers, json=data)
+                try:
+                    response = requests.post(url, headers=headers, json=data, timeout=30)
+                except requests.exceptions.Timeout:
+                    print(f"Timed out waiting for Gemini API (attempt {attempt+1})")
+                    if attempt < 2:
+                        continue
+                    return ""
                 if response.status_code == 200:
                     res_json = response.json()
                     return res_json['candidates'][0]['content']['parts'][0]['text']

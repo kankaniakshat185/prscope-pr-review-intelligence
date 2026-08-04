@@ -31,7 +31,7 @@ def validate_architecture(pr_data: Dict[str, Any], rules_yaml: str = None) -> Li
         
         # Only check added lines
         added_lines = [
-            line[1:] for line in patch.split('\\n') 
+            line[1:] for line in patch.split('\n')
             if line.startswith('+') and not line.startswith('+++')
         ]
         

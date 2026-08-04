@@ -6,8 +6,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import settings
 
 ALGORITHM = "HS256"
-# In a real app this should be in settings, but we provide a default for demo
-SECRET_KEY = getattr(settings, "JWT_SECRET", "super-secret-key-for-prscope")
+SECRET_KEY = settings.JWT_SECRET
 
 security = HTTPBearer()
 
