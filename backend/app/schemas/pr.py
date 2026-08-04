@@ -10,21 +10,35 @@ class PRAnalysisRequest(BaseModel):
     ai_provider: str = "gemini"
     custom_rules_yaml: Optional[str] = None
 
-class PRAnalysisResponse(BaseModel):
+class PRDeterministicResponse(BaseModel):
+    """
+    Everything that doesn't require an LLM call: fast (typically well under
+    a second), returned first so the UI has something to render immediately
+    instead of blocking on the slower AI-generated content below.
+    """
     risk_score: Dict[str, Any]
     impact_analysis: Dict[str, Any]
     architecture_violations: List[Dict[str, Any]]
     similar_incidents: List[Dict[str, Any]]
-    review_checklist: List[str]
-    suggested_comments: List[Dict[str, Any]]
-    jira_context: Optional[Dict[str, Any]]
-    executive_summary: str
     changed_symbols: Dict[str, List[str]]
-    security_findings: List[Dict[str, Any]] = []
+    security_findings: List[Dict[str, Any]] = []  # deterministic detection only - no ai_* fields yet
     pr_type: Optional[str] = None
     reviewability: Optional[Dict[str, Any]] = None
     pr_title: Optional[str] = None
     has_tests: bool = False
+
+
+class PREnrichmentResponse(BaseModel):
+    """
+    The LLM-generated content: slower (can legitimately take a minute-plus
+    with retry/backoff), fetched separately after PRDeterministicResponse so
+    the UI can show deterministic results instantly while this streams in.
+    """
+    review_checklist: List[str]
+    suggested_comments: List[Dict[str, Any]]
+    jira_context: Optional[Dict[str, Any]]
+    executive_summary: str
+    security_findings: List[Dict[str, Any]] = []  # same findings as the deterministic response, now with ai_* fields populated
 
 class PostCommentRequest(BaseModel):
     repo_url: str

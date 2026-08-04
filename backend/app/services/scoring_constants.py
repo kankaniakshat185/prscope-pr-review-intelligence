@@ -33,6 +33,13 @@ CALLERS_MODERATE = 6
 # --- Affected-service count threshold ---
 SERVICES_WIDESPREAD = 3
 
+# --- Cyclomatic complexity thresholds (McCabe: 1-10 simple, but PR-diff-
+# level functions are usually smaller than a full file, so these are set
+# tighter than the textbook whole-codebase guidance) ---
+COMPLEXITY_VERY_HIGH = 15
+COMPLEXITY_HIGH = 10
+COMPLEXITY_MODERATE = 6
+
 # --- Risk-sensitive module paths ---
 CRITICAL_DIRS = [
     "backend/auth", "backend/payment", "backend/core", "backend/security",

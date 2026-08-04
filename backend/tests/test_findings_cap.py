@@ -39,8 +39,10 @@ def test_only_the_first_N_findings_get_ai_explained(client, mock_token):
          patch("app.api.endpoints.asyncio.sleep", return_value=None), \
          patch("app.services.llm.settings.GEMINI_API_KEY", "fake-key"), \
          patch("requests.post", side_effect=fake_llm_response):
+        # AI-explanation of findings now happens in the enrichment endpoint,
+        # not the fast deterministic /analyze endpoint.
         r = client.post(
-            "/api/analysis/analyze",
+            "/api/analysis/analyze/enrich",
             headers={"Authorization": f"Bearer {mock_token}"},
             json={"repo_url": "https://github.com/octocat/Hello-World", "pr_number": 1},
         )

@@ -1,10 +1,11 @@
 from fastapi import APIRouter, HTTPException, Depends, Security
 from fastapi.concurrency import run_in_threadpool
+from typing import Dict, Any, Optional
 from sqlalchemy import String
 from sqlalchemy.orm import Session
 from app.models.pr import SessionLocal, User, SavedReview, ReviewEvent
 from app.schemas.pr import (
-    PRAnalysisRequest, PRAnalysisResponse,
+    PRAnalysisRequest, PRDeterministicResponse, PREnrichmentResponse,
     PostCommentRequest, SavedReviewCreate, SavedReviewResponse, ReviewEventResponse
 )
 from app.services.github import fetch_pr_data, fetch_architecture_rules
@@ -18,6 +19,7 @@ from app.services.architecture import validate_architecture
 from app.services.incident_similarity import find_similar_incidents
 from app.services.security_engine import analyze_security
 from app.services.dependency_engine import build_dependency_graph
+from app.services.complexity_engine import compute_function_complexities
 from app.services.reviewability_engine import calculate_reviewability
 from app.services.auth import create_access_token, verify_token
 from app.services.rate_limiter import rate_limited_user
@@ -155,95 +157,149 @@ async def github_callback(code: str, db: Session = Depends(get_db)):
 # ANALYSIS ENGINE
 # ==================================================
 
-@router.post("/analyze", response_model=PRAnalysisResponse)
-async def analyze_pr(request: PRAnalysisRequest, user_id: int = Depends(rate_limited_user)):
+async def _run_deterministic_pipeline(pr_data: Dict[str, Any], custom_rules_yaml: Optional[str]) -> Dict[str, Any]:
+    """
+    Everything that doesn't need an LLM call. Shared by both /analyze (which
+    returns this directly, fast) and /analyze/enrich (which needs the same
+    risk_score/impact/arch_violations/security_findings to build its LLM
+    prompt context, and to run AI-explanation on top of these same
+    deterministic security findings). Each endpoint calls this
+    independently and re-fetches pr_data itself rather than one passing
+    cached state to the other - keeps both endpoints simple and stateless,
+    at the cost of some duplicated (but fast, non-LLM) computation.
+    """
     from app.services.context_builder import classify_pr
-    
+
+    pr_type = classify_pr(pr_data.get('files', []))
+    has_tests = any(
+        "test" in f.get("filename", "").lower() or f.get("filename", "").startswith("tests/")
+        for f in pr_data.get('files', [])
+    )
+
+    symbols = analyze_symbols(pr_data)
+
+    # Cyclomatic complexity (Python files only - same diff-fragment
+    # limitation as symbol extraction and dependency graph construction)
+    complexity_data: Dict[str, int] = {}
+    for changed_file in pr_data.get('files', []):
+        if changed_file.get('filename', '').endswith('.py'):
+            for fn_name, complexity in compute_function_complexities(changed_file.get('patch', '')).items():
+                complexity_data[fn_name] = max(complexity_data.get(fn_name, 0), complexity)
+
+    # Dependency Intelligence (Call Graph & Impact)
+    dependency_graph = build_dependency_graph(pr_data.get('files', []), symbols)
+
+    filtered_functions = []
+    for func in dependency_graph.get('modified_functions', []):
+        up = len(func.get('called_by', []))
+        down = len(func.get('calls', []))
+        if up > 0 or down > 0:
+            filtered_functions.append(func)
+
+    filtered_functions.sort(key=lambda x: len(x.get('called_by', [])) + len(x.get('calls', [])), reverse=True)
+    dependency_graph['modified_functions'] = filtered_functions[:10]
+
+    impact = analyze_impact(pr_data)
+    impact["dependency_graph"] = dependency_graph
+
+    # Security Findings Engine (deterministic detection only - AI
+    # explanations, if any, are added later by the enrichment endpoint)
+    security_findings = []
+    is_docs_pr = (pr_type == "DOCS")
+    if not is_docs_pr:
+        # Offloaded to a thread pool: for Python files this shells out to
+        # bandit (a subprocess call), which must not block the event loop.
+        security_findings = await run_in_threadpool(analyze_security, pr_data.get('files', []))
+
+    rules_yaml = custom_rules_yaml
+    if not rules_yaml:
+        rules_yaml = await fetch_architecture_rules(pr_data.get("owner", ""), pr_data.get("repo", ""))
+    arch_violations = validate_architecture(pr_data, rules_yaml)
+    similar_incidents = find_similar_incidents(pr_data)
+
+    risk_score = calculate_risk(
+        pr_data=pr_data,
+        pr_type=pr_type,
+        changed_symbols=symbols,
+        dependency_impact=impact,
+        security_findings=security_findings,
+        architecture_violations=arch_violations,
+        complexity_data=complexity_data
+    )
+
+    reviewability = calculate_reviewability(
+        pr_data=pr_data,
+        security_findings=security_findings,
+        architecture_violations=arch_violations
+    )
+
+    return {
+        "pr_type": pr_type,
+        "has_tests": has_tests,
+        "symbols": symbols,
+        "impact": impact,
+        "security_findings": security_findings,
+        "arch_violations": arch_violations,
+        "similar_incidents": similar_incidents,
+        "risk_score": risk_score,
+        "reviewability": reviewability,
+    }
+
+
+@router.post("/analyze", response_model=PRDeterministicResponse)
+async def analyze_pr(request: PRAnalysisRequest, user_id: int = Depends(rate_limited_user)):
+    try:
+        pr_data = await fetch_pr_data(request.repo_url, request.pr_number)
+        result = await _run_deterministic_pipeline(pr_data, request.custom_rules_yaml)
+
+        return PRDeterministicResponse(
+            risk_score=result["risk_score"],
+            impact_analysis=result["impact"],
+            architecture_violations=result["arch_violations"],
+            similar_incidents=result["similar_incidents"],
+            changed_symbols=result["symbols"],
+            security_findings=result["security_findings"],
+            pr_type=result["pr_type"],
+            reviewability=result["reviewability"],
+            pr_title=pr_data.get('title', ''),
+            has_tests=result["has_tests"]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/analyze/enrich", response_model=PREnrichmentResponse)
+async def enrich_pr_analysis(request: PRAnalysisRequest, user_id: int = Depends(rate_limited_user)):
+    """
+    The slow, LLM-generated half of analysis: AI explanations for security
+    findings, the review checklist, suggested comments, executive summary,
+    and Jira context. Called separately from (and after) /analyze so the UI
+    can render deterministic results immediately instead of blocking on
+    this - which can legitimately take a minute or more with the retry/
+    backoff logic in llm.py.
+    """
     try:
         active_key = request.openai_api_key if request.ai_provider == "openai" else request.gemini_api_key
         provider = request.ai_provider
 
         pr_data = await fetch_pr_data(request.repo_url, request.pr_number)
+        result = await _run_deterministic_pipeline(pr_data, request.custom_rules_yaml)
 
-        pr_type = classify_pr(pr_data.get('files', []))
-        has_tests = any(
-            "test" in f.get("filename", "").lower() or f.get("filename", "").startswith("tests/")
-            for f in pr_data.get('files', [])
-        )
-        
-        # 2. Extract changed symbols
-        symbols = analyze_symbols(pr_data)
-
-        # 3. Dependency Intelligence (Call Graph & Impact)
-        dependency_graph = build_dependency_graph(pr_data.get('files', []), symbols)
-        
-        # Filter dependency graph (Hide symbols where upstream_callers == 0 AND downstream_calls == 0)
-        filtered_functions = []
-        for func in dependency_graph.get('modified_functions', []):
-            up = len(func.get('called_by', []))
-            down = len(func.get('calls', []))
-            if up > 0 or down > 0:
-                filtered_functions.append(func)
-                
-        # Sort by total impact descending
-        filtered_functions.sort(key=lambda x: len(x.get('called_by', [])) + len(x.get('calls', [])), reverse=True)
-        # Limit top 10
-        dependency_graph['modified_functions'] = filtered_functions[:10]
-        
-        impact = analyze_impact(pr_data)
-        impact["dependency_graph"] = dependency_graph
-        
-        # 4. Security Findings Engine
         security_findings = []
-        is_docs_pr = (pr_type == "DOCS")
-            
-        if not is_docs_pr:
-            raw_findings = analyze_security(pr_data.get('files', []))
-            # Enrich with Gemini Explanations
-            # (offloaded to a thread pool: explain_security_finding makes a
-            # blocking HTTP call and must not run directly on the event loop)
-            #
-            # Findings beyond MAX_AI_EXPLAINED_FINDINGS still appear with their
-            # deterministic detection (name/severity/file/snippet) - they just
-            # skip the extra AI call, bounding worst-case analysis time on PRs
-            # with many findings instead of it scaling unboundedly.
-            for i, finding in enumerate(raw_findings):
-                if i < MAX_AI_EXPLAINED_FINDINGS:
-                    enriched = await run_in_threadpool(explain_security_finding, finding, active_key, provider)
-                    security_findings.append(enriched)
-                    await asyncio.sleep(LLM_CALL_SPACING_SECONDS)
-                else:
-                    security_findings.append(finding)
+        # Findings beyond MAX_AI_EXPLAINED_FINDINGS still appear with their
+        # deterministic detection (name/severity/file/snippet) - they just
+        # skip the extra AI call, bounding worst-case analysis time on PRs
+        # with many findings instead of it scaling unboundedly.
+        for i, finding in enumerate(result["security_findings"]):
+            if i < MAX_AI_EXPLAINED_FINDINGS:
+                enriched = await run_in_threadpool(explain_security_finding, finding, active_key, provider)
+                security_findings.append(enriched)
+                await asyncio.sleep(LLM_CALL_SPACING_SECONDS)
+            else:
+                security_findings.append(finding)
 
+        pr_context = build_pr_context(pr_data, result["risk_score"], result["impact"], result["arch_violations"])
 
-        # 5. Architecture & Similarity
-        rules_yaml = request.custom_rules_yaml
-        if not rules_yaml:
-            rules_yaml = await fetch_architecture_rules(pr_data.get("owner", ""), pr_data.get("repo", ""))
-        arch_violations = validate_architecture(pr_data, rules_yaml)
-        similar_incidents = find_similar_incidents(pr_data)
-        
-        # 6. Deterministic risk engine
-        risk_score = calculate_risk(
-            pr_data=pr_data,
-            pr_type=pr_type,
-            changed_symbols=symbols,
-            dependency_impact=impact,
-            security_findings=security_findings,
-            architecture_violations=arch_violations
-        )
-        
-        # 7. Deterministic reviewability engine
-        reviewability = calculate_reviewability(
-            pr_data=pr_data,
-            security_findings=security_findings,
-            architecture_violations=arch_violations
-        )
-        
-        # 8. Build Context for LLM
-        pr_context = build_pr_context(pr_data, risk_score, impact, arch_violations)
-        
-        # 9. LLM Generators
         # (each makes a blocking HTTP call; run_in_threadpool keeps the event
         # loop free for other requests instead of stalling the whole server)
         checklist = await run_in_threadpool(generate_review_checklist, pr_context, active_key, provider)
@@ -254,21 +310,12 @@ async def analyze_pr(request: PRAnalysisRequest, user_id: int = Depends(rate_lim
         await asyncio.sleep(LLM_CALL_SPACING_SECONDS)
         jira_context = await run_in_threadpool(extract_jira_context, pr_data, active_key, provider)
 
-        return PRAnalysisResponse(
-            risk_score=risk_score,
-            impact_analysis=impact,
-            architecture_violations=arch_violations,
-            similar_incidents=similar_incidents,
+        return PREnrichmentResponse(
             review_checklist=checklist,
             suggested_comments=comments,
             jira_context=jira_context,
             executive_summary=exec_summary,
-            changed_symbols=symbols,
             security_findings=security_findings,
-            pr_type=pr_context.get('pr_type'),
-            reviewability=reviewability,
-            pr_title=pr_data.get('title', ''),
-            has_tests=has_tests
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

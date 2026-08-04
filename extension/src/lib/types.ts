@@ -84,22 +84,37 @@ export interface SimilarIncident {
   explanation: string;
 }
 
-export interface PRAnalysisData {
+// Matches backend PRDeterministicResponse: returned by POST /analyze, no LLM
+// call involved, so this arrives fast and the UI can render it immediately.
+export interface PRDeterministicData {
   risk_score: RiskScore;
   impact_analysis: ImpactAnalysis;
   architecture_violations: ArchitectureViolation[];
   similar_incidents: SimilarIncident[];
-  review_checklist: string[];
-  suggested_comments: SuggestedComment[];
-  jira_context: JiraContext | null;
-  executive_summary: string;
   changed_symbols: ChangedSymbols;
-  security_findings: SecurityFinding[];
+  security_findings: SecurityFinding[]; // deterministic detection only - no ai_* fields yet
   pr_type: string | null;
   reviewability: Reviewability | null;
   pr_title: string | null;
   has_tests: boolean;
 }
+
+// Matches backend PREnrichmentResponse: returned by POST /analyze/enrich,
+// fetched separately (and later) since it involves several LLM calls and
+// can legitimately take a minute or more.
+export interface PREnrichmentData {
+  review_checklist: string[];
+  suggested_comments: SuggestedComment[];
+  jira_context: JiraContext | null;
+  executive_summary: string;
+  security_findings: SecurityFinding[]; // same findings, now with ai_* fields populated
+}
+
+// The shape the UI actually works with: deterministic fields are always
+// present once /analyze resolves; enrichment fields are absent (undefined)
+// until /analyze/enrich resolves too - components need to render a loading
+// state for those fields rather than assume they're always there.
+export type PRAnalysisData = PRDeterministicData & Partial<PREnrichmentData>;
 
 export interface AuthUser {
   username: string;

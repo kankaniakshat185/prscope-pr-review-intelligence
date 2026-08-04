@@ -1,10 +1,11 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from app.services.scoring_constants import (
     LOC_MASSIVE, LOC_LARGE, LOC_MODERATE,
     FILES_MASSIVE, FILES_LARGE, FILES_MODERATE,
     SYMBOLS_LARGE, SYMBOLS_MODERATE,
     CALLERS_HIGH, CALLERS_MODERATE,
     SERVICES_WIDESPREAD,
+    COMPLEXITY_VERY_HIGH, COMPLEXITY_HIGH, COMPLEXITY_MODERATE,
     CRITICAL_DIRS,
     RISK_HIGH_THRESHOLD, RISK_MEDIUM_THRESHOLD,
 )
@@ -17,7 +18,8 @@ def calculate_risk(
     changed_symbols: Dict[str, List[str]],
     dependency_impact: Dict[str, Any],
     security_findings: List[Dict[str, Any]],
-    architecture_violations: List[Dict[str, Any]]
+    architecture_violations: List[Dict[str, Any]],
+    complexity_data: Optional[Dict[str, int]] = None
 ) -> Dict[str, Any]:
     score = 0
     factors = []
@@ -127,7 +129,23 @@ def calculate_risk(
     elif num_symbols >= SYMBOLS_MODERATE:
         score += 1
         factors.append({"name": "Moderate Symbol Surface", "weight": 1, "reason": f"{num_symbols} symbols modified"})
-        
+
+    # 7b. Cyclomatic Complexity (McCabe, computed from an actual control-flow
+    # graph - see complexity_engine.py). A genuine static-analysis metric
+    # rather than a LOC-based proxy for "how complicated is this function."
+    if complexity_data:
+        most_complex_fn = max(complexity_data, key=complexity_data.get)
+        max_complexity = complexity_data[most_complex_fn]
+        if max_complexity >= COMPLEXITY_VERY_HIGH:
+            score += 3
+            factors.append({"name": "Very High Cyclomatic Complexity", "weight": 3, "reason": f"'{most_complex_fn}' has cyclomatic complexity {max_complexity}"})
+        elif max_complexity >= COMPLEXITY_HIGH:
+            score += 2
+            factors.append({"name": "High Cyclomatic Complexity", "weight": 2, "reason": f"'{most_complex_fn}' has cyclomatic complexity {max_complexity}"})
+        elif max_complexity >= COMPLEXITY_MODERATE:
+            score += 1
+            factors.append({"name": "Moderate Cyclomatic Complexity", "weight": 1, "reason": f"'{most_complex_fn}' has cyclomatic complexity {max_complexity}"})
+
     # 8. Dependency Impact Scoring
     dep_graph = dependency_impact.get("dependency_graph", {})
     downstream_callers = set()

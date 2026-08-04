@@ -26,7 +26,7 @@ function MainDashboard() {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
 
-  const { data, loading, error, fetchAnalysis } = useAnalysis(API_BASE, token);
+  const { data, loading, error, enriching, enrichError, fetchAnalysis, fetchEnrichment } = useAnalysis(API_BASE, token);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -186,7 +186,10 @@ function MainDashboard() {
           data={data}
           loading={loading}
           error={error}
+          enriching={enriching}
+          enrichError={enrichError}
           onRetry={() => fetchAnalysis(owner, repo, pr, customRulesYaml)}
+          onRetryEnrichment={() => fetchEnrichment(owner, repo, pr, customRulesYaml)}
         />
       )}
 

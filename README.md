@@ -11,10 +11,12 @@ Built for high-velocity engineering teams, PRScope significantly reduces the cog
 ## Core Capabilities
 
 ### Deterministic Risk Assessment
-Generates a quantifiable Risk Score (1-10) and a Reviewability Index based on rigid heuristics rather than stochastic LLM generation. Evaluates factors such as Line of Code (LOC) volatility, symbol modification density, test coverage deltas, and PR description fidelity to triage the risk of a merge.
+Generates a quantifiable Risk Score (1-10) and a Reviewability Index based on rigid heuristics rather than stochastic LLM generation. Evaluates factors such as Line of Code (LOC) volatility, symbol modification density, test coverage deltas, PR description fidelity, and — for **Python files** — McCabe cyclomatic complexity, computed from an actual control-flow graph built for each added/modified function (not a LOC-based proxy), to triage the risk of a merge.
 
 ### Automated Security & Architecture Auditing
-Scans added lines in the diff against a deterministic set of pattern rules (hardcoded credentials, `eval`/`exec`, `shell=True`, unsafe deserialization, f-string SQL interpolation, and similar known-bad patterns) and flags configured module-boundary/import violations. This is single-line pattern matching, not a full SAST engine — it won't catch multi-line, obfuscated, or otherwise disguised issues, and it doesn't detect unknown ("zero-day") vulnerability classes by design.
+For **Python files**, added lines are scanned with [Bandit](https://bandit.readthedocs.io/), an established static-analysis security linter (hardcoded credentials, unsafe deserialization, command injection, weak crypto, and dozens of other checks), supplemented by a small set of deterministic pattern rules for gaps Bandit doesn't cover (e.g. generic `API_KEY`/`SECRET`/`TOKEN`-style hardcoded credential naming). For **all other file types** (JS/TS, etc.), detection falls back to the pattern rules alone. Either way, only *added* lines are scanned, and this doesn't detect unknown ("zero-day") vulnerability classes by design — it's built to catch known-bad patterns reliably, not to reason about novel exploits.
+
+Architecture boundary rules (`.prscope.yml`) use the same approach: real AST-based import analysis for Python files (so it correctly ignores a restricted name merely mentioned in a comment or string, unlike naive text matching), with pattern-based detection as the fallback for non-Python files.
 
 ### Dynamic Architecture Verification (.prscope.yml)
 Supports highly customized, repository-specific architectural rules. The engine dynamically fetches and parses `.prscope.yml` definitions from the target repository root, allowing engineering teams to enforce strict, bespoke module boundaries and import restrictions on a per-project basis.
@@ -32,7 +34,10 @@ Users can bypass the shared API quota pool by supplying their own Gemini or Open
 The FastAPI backend exposes a signature-verified `pull_request` webhook receiver (`opened`, `synchronize`, `reopened`), gated by `GITHUB_WEBHOOK_SECRET`. Requests without a valid `X-Hub-Signature-256` are rejected outright. Today it validates and logs the event; it does not yet dispatch analysis automatically. It's built as the foundation for future CI/CD-triggered background analysis (e.g. via a task queue), not a shipped feature yet.
 
 ### Resilient Inference & Rate Limit Handling
-The LLM service layer implements robust exception boundaries to handle upstream API quotas gracefully, with bounded timeouts and thread-pool offloading so a slow provider response can't stall the whole API process. If global rate limits (HTTP 429) are exceeded, the platform automatically degrades into a deterministic heuristic mode, ensuring risk scores and dependency graphs are reliably delivered even during inference outages.
+The LLM service layer implements robust exception boundaries to handle upstream API quotas gracefully, with bounded timeouts, retry-with-backoff (both providers), and thread-pool offloading so a slow provider response can't stall the whole API process. If global rate limits (HTTP 429) are exceeded, the platform automatically degrades into a deterministic heuristic mode, ensuring risk scores and dependency graphs are reliably delivered even during inference outages.
+
+### Progressive Analysis (fast deterministic results, AI content streams in after)
+Analysis is split into two calls: `POST /analyze` runs only the deterministic engines (risk score, security findings, architecture violations, dependency graph, reviewability) and returns in well under a second, since it never touches an LLM. `POST /analyze/enrich` then runs the LLM-generated content (executive summary, review checklist, suggested comments, Jira context, and AI explanations for security findings) separately, which can legitimately take a minute or more given the retry/backoff behavior above. The extension renders deterministic results the moment they arrive rather than blocking the whole UI on the slower call.
 
 ## Security Model
 
@@ -59,7 +64,7 @@ graph TD
     subgraph Backend [FastAPI Backend]
         CORS{CORS gate<br/>allow-listed origins only}
         Auth[Auth: GitHub OAuth + JWT<br/>mock login gated, dev-only]
-        API[Analysis API<br/>requires bearer token]
+        API[Analysis API<br/>requires bearer token · split: fast /analyze + slower /analyze/enrich]
         Engines[Deterministic Engines<br/>risk · reviewability · security ·<br/>architecture · dependency graph · symbols]
         LLMSvc[LLM Service<br/>thread-pool offloaded, timeout-bounded]
         Webhook[Webhook Receiver<br/>HMAC-SHA256 verified · foundation only]

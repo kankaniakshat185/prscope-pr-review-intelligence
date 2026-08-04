@@ -17,6 +17,15 @@ const markdownComponents = {
   ol: ({ ...props }) => <ol className="list-decimal pl-4 mb-2" {...props} />,
 };
 
+function EnrichmentPending({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 py-4">
+      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#8b949e]" />
+      <span className={`text-xs ${textSecondary} animate-pulse`}>{label}</span>
+    </div>
+  );
+}
+
 function getReviewDecision(data: PRAnalysisData): ReviewDecision {
   const { risk_score, security_findings, architecture_violations, pr_type, has_tests } = data;
   const hasSec = security_findings && security_findings.length > 0;
@@ -66,7 +75,10 @@ export function PrReviewPanel({
   data,
   loading,
   error,
+  enriching,
+  enrichError,
   onRetry,
+  onRetryEnrichment,
 }: {
   owner: string;
   repo: string;
@@ -76,7 +88,10 @@ export function PrReviewPanel({
   data: PRAnalysisData | null;
   loading: boolean;
   error: string;
+  enriching: boolean;
+  enrichError: string;
   onRetry: () => void;
+  onRetryEnrichment: () => void;
 }) {
   const [noteStatus, setNoteStatus] = useState("IN_PROGRESS");
   const [noteText, setNoteText] = useState("");
@@ -160,7 +175,7 @@ export function PrReviewPanel({
   };
 
   const copySnapshot = () => {
-    if (!data) return;
+    if (!data || data.executive_summary === undefined) return; // AI content not ready yet
     const securityTxt = data.security_findings?.length > 0
       ? data.security_findings.map((f) => `- ${f.severity}: ${f.name}`).join("\n")
       : "None";
@@ -207,10 +222,23 @@ export function PrReviewPanel({
         </div>
       )}
 
+      {enrichError && (
+        <div className="bg-[#ffebe9] border border-[#ff8182] text-[#24292f] p-3 rounded-md mb-4 flex items-center gap-2 text-sm">
+          <AlertCircle className="h-4 w-4 text-[#cf222e] flex-shrink-0" />
+          <p>{enrichError} (deterministic results below are unaffected)</p>
+          <button onClick={onRetryEnrichment} className="ml-auto underline whitespace-nowrap">Retry</button>
+        </div>
+      )}
+
       {data && !loading && (
         <div className="space-y-4">
           <div className="flex items-center gap-2 mb-4">
-            <button onClick={copySnapshot} className={`flex-1 flex items-center justify-center gap-2 ${buttonStyle} whitespace-nowrap`}>
+            <button
+              onClick={copySnapshot}
+              disabled={data.executive_summary === undefined}
+              title={data.executive_summary === undefined ? "Waiting for AI-generated content to finish" : undefined}
+              className={`flex-1 flex items-center justify-center gap-2 ${buttonStyle} whitespace-nowrap ${data.executive_summary === undefined ? "opacity-50 cursor-not-allowed" : ""}`}
+            >
               <ClipboardCopy className="h-4 w-4" />
               Copy Snapshot
             </button>
@@ -339,6 +367,9 @@ export function PrReviewPanel({
                           {finding.file}
                         </div>
                         <div className="text-xs text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] mb-3">{finding.reason}</div>
+                        {enriching && !finding.ai_explanation && (
+                          <div className={`text-[11px] ${textSecondary} italic animate-pulse`}>Generating AI explanation…</div>
+                        )}
                         {finding.ai_explanation && (
                           <div className="mt-3 p-3 bg-[var(--bgColor-default,var(--color-canvas-default,#010409))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] rounded-md text-xs space-y-3">
                             <div className="text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">
@@ -510,19 +541,23 @@ export function PrReviewPanel({
                 </div>
               </AccordionTrigger>
               <AccordionContent className="p-4 bg-[var(--bgColor-default,var(--color-canvas-default,#010409))] border-t border-[var(--borderColor-default,var(--color-border-default,#30363d))]">
-                <div className="text-sm text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] leading-relaxed max-w-none break-words">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      h3: ({ ...props }) => <h3 className="text-base font-bold text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] mt-6 mb-2" {...props} />,
-                      p: ({ ...props }) => <p className="my-2 leading-6 whitespace-pre-wrap break-words" {...props} />,
-                      ul: ({ ...props }) => <ul className="list-disc pl-5 my-2 break-words" {...props} />,
-                      li: ({ ...props }) => <li className="my-1 break-words" {...props} />
-                    }}
-                  >
-                    {data.executive_summary}
-                  </ReactMarkdown>
-                </div>
+                {data.executive_summary === undefined ? (
+                  <EnrichmentPending label="Generating executive summary…" />
+                ) : (
+                  <div className="text-sm text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] leading-relaxed max-w-none break-words">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        h3: ({ ...props }) => <h3 className="text-base font-bold text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] mt-6 mb-2" {...props} />,
+                        p: ({ ...props }) => <p className="my-2 leading-6 whitespace-pre-wrap break-words" {...props} />,
+                        ul: ({ ...props }) => <ul className="list-disc pl-5 my-2 break-words" {...props} />,
+                        li: ({ ...props }) => <li className="my-1 break-words" {...props} />
+                      }}
+                    >
+                      {data.executive_summary}
+                    </ReactMarkdown>
+                  </div>
+                )}
               </AccordionContent>
             </AccordionItem>
 
@@ -535,14 +570,18 @@ export function PrReviewPanel({
                 </div>
               </AccordionTrigger>
               <AccordionContent className="p-4 bg-[var(--bgColor-default,var(--color-canvas-default,#010409))] border-t border-[var(--borderColor-default,var(--color-border-default,#30363d))]">
-                <div className="space-y-3">
-                  {data.review_checklist && data.review_checklist.map((item, i) => (
-                    <div key={i} className="flex items-start gap-3 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] p-3 rounded-md shadow-sm break-words">
-                      <CheckCircle className="h-4 w-4 mt-0.5 text-[var(--color-success-fg,#3fb950)] flex-shrink-0" />
-                      <span className={`text-sm ${textPrimary} leading-snug whitespace-pre-wrap flex-1 min-w-0 break-words`}>{item}</span>
-                    </div>
-                  ))}
-                </div>
+                {data.review_checklist === undefined ? (
+                  <EnrichmentPending label="Generating review checklist…" />
+                ) : (
+                  <div className="space-y-3">
+                    {data.review_checklist.map((item, i) => (
+                      <div key={i} className="flex items-start gap-3 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] p-3 rounded-md shadow-sm break-words">
+                        <CheckCircle className="h-4 w-4 mt-0.5 text-[var(--color-success-fg,#3fb950)] flex-shrink-0" />
+                        <span className={`text-sm ${textPrimary} leading-snug whitespace-pre-wrap flex-1 min-w-0 break-words`}>{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </AccordionContent>
             </AccordionItem>
 
@@ -555,7 +594,9 @@ export function PrReviewPanel({
                 </div>
               </AccordionTrigger>
               <AccordionContent className="p-4 bg-[var(--bgColor-default,var(--color-canvas-default,#010409))] border-t border-[var(--borderColor-default,var(--color-border-default,#30363d))]">
-                {data.suggested_comments && data.suggested_comments.length > 0 ? (
+                {data.suggested_comments === undefined ? (
+                  <EnrichmentPending label="Generating suggested comments…" />
+                ) : data.suggested_comments.length > 0 ? (
                   <div className="space-y-3">
                     {data.suggested_comments.map((comment, i) => (
                       <div key={i} className="bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] rounded-md border border-[var(--borderColor-default,var(--color-border-default,#30363d))] p-3">
@@ -631,7 +672,9 @@ export function PrReviewPanel({
               </AccordionTrigger>
               <AccordionContent className="p-4 bg-[var(--bgColor-default,var(--color-canvas-default,#010409))] border-t border-[var(--borderColor-default,var(--color-border-default,#30363d))]">
                 <div className="space-y-4">
-                  {data.jira_context ? (
+                  {data.jira_context === undefined ? (
+                    <EnrichmentPending label="Checking for Jira context…" />
+                  ) : data.jira_context ? (
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-semibold text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] uppercase">Ticket Alignment</span>
