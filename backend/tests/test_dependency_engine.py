@@ -54,8 +54,8 @@ def test_real_content_captures_calls_from_untouched_code_that_diff_reconstructio
     assert target_without["called_by"] == []
 
 
-def test_non_python_files_are_skipped_entirely():
-    files_changed = [{"filename": "app/index.js", "patch": "", "head_content": "function main() { helper(); }"}]
+def test_files_in_a_language_with_no_grammar_are_skipped_entirely():
+    files_changed = [{"filename": "app/main.go", "patch": "", "head_content": "func main() { helper() }"}]
     changed_symbols = {"functions_modified": ["main"], "functions_added": []}
 
     result = build_dependency_graph(files_changed, changed_symbols)
@@ -64,6 +64,27 @@ def test_non_python_files_are_skipped_entirely():
     main_entry = next(f for f in result["modified_functions"] if f["function"] == "main")
     assert main_entry["calls"] == []
     assert main_entry["called_by"] == []
+
+
+def test_js_file_with_real_head_content_produces_call_graph_edges():
+    head = "function helper() { return 1; }\nfunction main() { return helper(); }\n"
+    files_changed = [{"filename": "app/index.js", "patch": "", "head_content": head}]
+    changed_symbols = {"functions_modified": ["main"], "functions_added": []}
+
+    result = build_dependency_graph(files_changed, changed_symbols)
+
+    assert result["total_edges"] == 1
+    main_entry = next(f for f in result["modified_functions"] if f["function"] == "main")
+    assert main_entry["calls"] == ["helper"]
+
+
+def test_js_file_without_head_content_is_skipped_no_diff_fragment_fallback():
+    files_changed = [{"filename": "app/index.js", "patch": "+function main() { helper(); }", "head_content": None}]
+    changed_symbols = {"functions_modified": ["main"], "functions_added": []}
+
+    result = build_dependency_graph(files_changed, changed_symbols)
+
+    assert result["total_edges"] == 0
 
 
 def test_unparseable_head_content_does_not_crash():

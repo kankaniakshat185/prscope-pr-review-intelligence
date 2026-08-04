@@ -137,3 +137,33 @@ def test_analyze_symbols_falls_back_to_patch_when_no_head_content():
     }
     result = analyze_symbols(pr_data)
     assert "new_helper" in result["functions_added"]
+
+
+def test_analyze_symbols_routes_ts_files_through_the_treesitter_engine():
+    pr_data = {
+        "files": [
+            {
+                "filename": "app/utils.ts",
+                "patch": "+function newHelper() { return 1; }",
+                "base_content": "function a() { return 1; }\n",
+                "head_content": "function a() { return 1; }\nfunction newHelper() { return 1; }\n",
+            }
+        ]
+    }
+    result = analyze_symbols(pr_data)
+    assert result["functions_added"] == ["newHelper"]
+
+
+def test_analyze_symbols_falls_back_to_patch_for_js_without_head_content():
+    pr_data = {
+        "files": [
+            {
+                "filename": "app/utils.js",
+                "patch": "@@ -1,2 +1,3 @@\n const x = 1;\n+function newHelper() {}\n",
+                "base_content": None,
+                "head_content": None,
+            }
+        ]
+    }
+    result = analyze_symbols(pr_data)
+    assert "newHelper" in result["functions_added"]

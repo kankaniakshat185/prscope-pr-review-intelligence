@@ -45,11 +45,12 @@ def _pr_info(base_sha="base123", head_sha="head123"):
     })
 
 
-def test_attaches_base_and_head_content_for_python_files_only():
+def test_attaches_base_and_head_content_for_parseable_files_only():
     def responder(url, headers, params):
         if url.endswith("/pulls/1/files"):
             return _FakeResponse(200, json_data=[
                 {"filename": "app/a.py", "status": "modified", "patch": "x"},
+                {"filename": "app/b.ts", "status": "modified", "patch": "x"},
                 {"filename": "README.md", "status": "modified", "patch": "x"},
             ])
         if url.endswith("/pulls/1"):
@@ -57,11 +58,18 @@ def test_attaches_base_and_head_content_for_python_files_only():
         if url.endswith("/contents/app/a.py"):
             ref = params.get("ref")
             return _FakeResponse(200, text="def old(): pass" if ref == "base123" else "def new(): pass")
+        if url.endswith("/contents/app/b.ts"):
+            ref = params.get("ref")
+            return _FakeResponse(200, text="function old() {}" if ref == "base123" else "function updated() {}")
         raise AssertionError(f"unexpected url {url} params={params}")
 
     calls = []
     with _patch_client(responder, calls):
         result = asyncio.run(fetch_pr_data("https://github.com/octocat/Hello-World", 1))
+
+    ts_file = next(f for f in result["files"] if f["filename"] == "app/b.ts")
+    assert ts_file["base_content"] == "function old() {}"
+    assert ts_file["head_content"] == "function updated() {}"
 
     py_file = next(f for f in result["files"] if f["filename"] == "app/a.py")
     assert py_file["base_content"] == "def old(): pass"

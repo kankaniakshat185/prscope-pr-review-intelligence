@@ -1,6 +1,7 @@
 import ast
 import re
 from typing import Dict, Any, List, Optional, Tuple
+from app.services.treesitter_engine import extract_symbols_via_treesitter, is_supported_file as is_treesitter_supported
 
 
 def _collect_definitions(source: str) -> Tuple[Dict[str, ast.AST], Dict[str, ast.AST]]:
@@ -128,13 +129,16 @@ def analyze_symbols(pr_data: Dict[str, Any]) -> Dict[str, List[str]]:
         head_content = f.get("head_content")
 
         symbols = None
-        if filename.endswith(".py") and head_content is not None:
-            symbols = extract_symbols_via_ast(f.get("base_content"), head_content)
+        if head_content is not None:
+            if filename.endswith(".py"):
+                symbols = extract_symbols_via_ast(f.get("base_content"), head_content)
+            elif is_treesitter_supported(filename):
+                symbols = extract_symbols_via_treesitter(f.get("base_content"), head_content, filename)
 
         if symbols is None:
-            # No real content fetched for this file (non-Python, fetch
-            # failed/skipped, or the head side didn't parse) - fall back to
-            # regex heuristics on the diff patch.
+            # No real content fetched for this file (unsupported language,
+            # fetch failed/skipped, or the head side didn't parse) - fall
+            # back to regex heuristics on the diff patch.
             patch = f.get("patch", "")
             if not patch:
                 continue

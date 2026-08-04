@@ -1,5 +1,6 @@
 import ast
 import networkx as nx
+from app.services.treesitter_engine import collect_calls as collect_treesitter_calls, is_supported_file as is_treesitter_supported
 
 class CallGraphVisitor(ast.NodeVisitor):
     def __init__(self):
@@ -48,27 +49,41 @@ def build_dependency_graph(files_changed: list, changed_symbols: dict) -> dict:
     graph = nx.DiGraph()
 
     for f in files_changed:
-        if not f.get("filename", "").endswith(".py"):
-            continue
+        filename = f.get("filename", "")
 
-        # Prefer the real head file content fetched from GitHub - parsing
-        # the whole file (not just the diff hunk) means calls made from/to
-        # untouched parts of the same file are captured accurately too.
-        # Cross-file calls are still out of scope (that needs a full-repo
-        # index, not a per-PR fetch).
-        source = f.get("head_content")
-        if source is None:
-            source = _reconstruct_source_from_patch(f.get("patch", ""))
+        if filename.endswith(".py"):
+            # Prefer the real head file content fetched from GitHub -
+            # parsing the whole file (not just the diff hunk) means calls
+            # made from/to untouched parts of the same file are captured
+            # accurately too. Cross-file calls are still out of scope (that
+            # needs a full-repo index, not a per-PR fetch).
+            source = f.get("head_content")
+            if source is None:
+                source = _reconstruct_source_from_patch(f.get("patch", ""))
 
-        try:
-            tree = ast.parse(source)
-            visitor = CallGraphVisitor()
-            visitor.visit(tree)
+            try:
+                tree = ast.parse(source)
+                visitor = CallGraphVisitor()
+                visitor.visit(tree)
 
-            for caller, callee in visitor.calls:
-                graph.add_edge(caller, callee)
-        except SyntaxError:
-            pass
+                for caller, callee in visitor.calls:
+                    graph.add_edge(caller, callee)
+            except SyntaxError:
+                pass
+
+        elif is_treesitter_supported(filename):
+            # No diff-fragment fallback here (tree-sitter's error recovery
+            # makes a "reconstruct a fake script from hunk lines" fallback
+            # both unnecessary and less reliable than just skipping) - real
+            # head content or nothing.
+            head_content = f.get("head_content")
+            if head_content is None:
+                continue
+
+            calls = collect_treesitter_calls(head_content, filename)
+            if calls:
+                for caller, callee in calls:
+                    graph.add_edge(caller, callee)
             
     dependencies = []
     

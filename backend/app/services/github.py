@@ -2,12 +2,18 @@ import asyncio
 import httpx
 from typing import Dict, Any, Optional
 from app.core.config import settings
+from app.services.treesitter_engine import is_supported_file as is_treesitter_supported
 
-# How many changed Python files get real base/head content fetched via the
+# How many changed files (of a language we can actually parse - Python or a
+# tree-sitter-supported one) get real base/head content fetched via the
 # Contents API per analysis. Bounds the extra API call volume (2 calls/file)
 # on huge PRs; files beyond the cap fall back to diff-fragment reconstruction
 # in symbols_analysis.py / dependency_engine.py, same as before this existed.
 MAX_FILES_FOR_CONTENT_FETCH = 30
+
+
+def _is_parseable_file(filename: str) -> bool:
+    return filename.endswith(".py") or is_treesitter_supported(filename)
 
 
 async def fetch_file_content(
@@ -67,10 +73,11 @@ async def fetch_pr_data(repo_url: str, pr_number: int) -> Dict[str, Any]:
         base_sha = pr_info.get("base", {}).get("sha")
         head_sha = pr_info.get("head", {}).get("sha")
 
-        # Fetch real base/head file content for Python files - this is what
-        # symbol extraction and the dependency graph now analyze, instead of
-        # reconstructing a "fake" source from diff-hunk text alone.
-        python_files = [f for f in files_info if f.get("filename", "").endswith(".py")][:MAX_FILES_FOR_CONTENT_FETCH]
+        # Fetch real base/head file content for Python and JS/TS files -
+        # this is what symbol extraction and the dependency graph now
+        # analyze, instead of reconstructing a "fake" source from diff-hunk
+        # text alone.
+        parseable_files = [f for f in files_info if _is_parseable_file(f.get("filename", ""))][:MAX_FILES_FOR_CONTENT_FETCH]
 
         async def _attach_content(f: Dict[str, Any]) -> None:
             status = f.get("status")
@@ -84,7 +91,7 @@ async def fetch_pr_data(repo_url: str, pr_number: int) -> Dict[str, Any]:
             f["base_content"] = base_content
             f["head_content"] = head_content
 
-        await asyncio.gather(*(_attach_content(f) for f in python_files))
+        await asyncio.gather(*(_attach_content(f) for f in parseable_files))
 
     # Extract metadata
     return {
