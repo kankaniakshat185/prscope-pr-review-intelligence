@@ -41,11 +41,20 @@ export interface DependencyGraphFunction {
   function: string;
   calls: string[];
   called_by: string[];
+  // "file:name" pairs - callers found anywhere in the repo via the
+  // persisted index (see repo_index_engine.py), not just this PR's own
+  // changed files. Present only when there's at least one such caller.
+  repo_wide_called_by?: string[];
 }
 
 export interface DependencyGraphData {
   modified_functions: DependencyGraphFunction[];
   total_edges: number;
+  // Whether a repo-wide index exists for this repo yet, and how fresh it
+  // is - drives whether/how the UI surfaces repo_wide_called_by and the
+  // "build index" affordance.
+  repo_index_status?: "not_indexed" | "pending" | "indexing" | "ready" | "failed";
+  repo_index_updated_at?: string | null;
 }
 
 export interface ImpactAnalysis {

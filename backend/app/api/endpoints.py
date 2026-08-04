@@ -3,10 +3,11 @@ from fastapi.concurrency import run_in_threadpool
 from typing import Dict, Any, Optional
 from sqlalchemy import String
 from sqlalchemy.orm import Session
-from app.models.pr import SessionLocal, User, SavedReview, ReviewEvent
+from app.models.pr import SessionLocal, User, SavedReview, ReviewEvent, RepoIndex
 from app.schemas.pr import (
     PRAnalysisRequest, PRDeterministicResponse, PREnrichmentResponse,
-    PostCommentRequest, PostStatusRequest, SavedReviewCreate, SavedReviewResponse, ReviewEventResponse
+    PostCommentRequest, PostStatusRequest, RepoIndexRequest, RepoIndexStatusResponse,
+    SavedReviewCreate, SavedReviewResponse, ReviewEventResponse
 )
 from app.services.github import fetch_pr_data, fetch_architecture_rules, fetch_pr_head_sha
 from app.services.github_status import post_commit_status
@@ -25,6 +26,7 @@ from app.services.reviewability_engine import calculate_reviewability
 from app.services.auth import create_access_token, verify_token
 from app.services.rate_limiter import rate_limited_user
 from app.services.webhook_debouncer import WebhookDebouncer
+from app.services.repo_index_engine import build_or_update_index, enrich_with_repo_wide_blast_radius
 from app.core.config import settings
 from datetime import datetime
 import asyncio
@@ -191,14 +193,31 @@ async def _run_deterministic_pipeline(pr_data: Dict[str, Any], custom_rules_yaml
     # Dependency Intelligence (Call Graph & Impact)
     dependency_graph = build_dependency_graph(pr_data.get('files', []), symbols)
 
+    # Repo-wide blast radius, if a persisted index exists for this repo
+    # (see repo_index_engine.py) - done before the filter/rank step below,
+    # since a function that looks "locally unconnected" (nothing in this
+    # PR's own changed files calls it) might still be heavily called from
+    # elsewhere in the repo, which is exactly the case this feature exists
+    # to surface. Read-only: never builds/updates the index itself.
+    db = SessionLocal()
+    try:
+        await run_in_threadpool(
+            enrich_with_repo_wide_blast_radius, db, pr_data.get("owner", ""), pr_data.get("repo", ""), dependency_graph
+        )
+    finally:
+        db.close()
+
     filtered_functions = []
     for func in dependency_graph.get('modified_functions', []):
-        up = len(func.get('called_by', []))
+        up = len(func.get('called_by', [])) + len(func.get('repo_wide_called_by', []))
         down = len(func.get('calls', []))
         if up > 0 or down > 0:
             filtered_functions.append(func)
 
-    filtered_functions.sort(key=lambda x: len(x.get('called_by', [])) + len(x.get('calls', [])), reverse=True)
+    filtered_functions.sort(
+        key=lambda x: len(x.get('called_by', [])) + len(x.get('calls', [])) + len(x.get('repo_wide_called_by', [])),
+        reverse=True
+    )
     dependency_graph['modified_functions'] = filtered_functions[:10]
 
     impact = analyze_impact(pr_data)
@@ -321,6 +340,72 @@ async def enrich_pr_analysis(request: PRAnalysisRequest, user_id: int = Depends(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ==================================================
+# REPO-WIDE INDEX (cross-file blast radius)
+# ==================================================
+
+# Repos currently being indexed - guards against one process kicking off two
+# concurrent builds for the same repo (e.g. a double-click). In-memory,
+# per-process, same tradeoff as rate_limiter.py/webhook_debouncer.py.
+_index_builds_in_progress: set = set()
+
+
+def _parse_owner_repo(repo_url: str) -> tuple:
+    parts = repo_url.rstrip('/').split('/')
+    if len(parts) < 2:
+        raise HTTPException(status_code=400, detail="Invalid GitHub repository URL")
+    return parts[-2], parts[-1]
+
+
+@router.post("/index/build")
+async def trigger_repo_index_build(request: RepoIndexRequest, user_id: int = Depends(verify_token)):
+    """
+    Kicks off a full-repo index build (or incremental refresh) in the
+    background and returns immediately - a first build can take a while
+    (up to MAX_FILES_PER_INDEX file fetches), so this isn't awaited inline.
+    Poll GET /index/status for progress.
+    """
+    owner, repo = _parse_owner_repo(request.repo_url)
+    repository = f"{owner}/{repo}"
+
+    if repository in _index_builds_in_progress:
+        return {"status": "already_in_progress", "repository": repository}
+
+    _index_builds_in_progress.add(repository)
+
+    async def _run():
+        db = SessionLocal()
+        try:
+            await build_or_update_index(db, owner, repo)
+        except Exception as e:
+            print(f"Repo index build failed for {repository}: {e}")
+        finally:
+            db.close()
+            _index_builds_in_progress.discard(repository)
+
+    asyncio.create_task(_run())
+    return {"status": "started", "repository": repository}
+
+
+@router.get("/index/status", response_model=RepoIndexStatusResponse)
+def get_repo_index_status(repo_url: str, user_id: int = Depends(verify_token), db: Session = Depends(get_db)):
+    owner, repo = _parse_owner_repo(repo_url)
+    repository = f"{owner}/{repo}"
+
+    repo_index = db.query(RepoIndex).filter(RepoIndex.repository == repository).first()
+    if repo_index is None:
+        return RepoIndexStatusResponse(repository=repository, status="not_indexed")
+
+    return RepoIndexStatusResponse(
+        repository=repository,
+        status=repo_index.status,
+        indexed_sha=repo_index.indexed_sha,
+        indexed_at=repo_index.indexed_at,
+        file_count=repo_index.file_count,
+        function_count=repo_index.function_count,
+        error_message=repo_index.error_message,
+    )
 
 # ==================================================
 # SAVED REVIEWS WORKSPACE
@@ -489,7 +574,7 @@ def _webhook_status_from_result(result: Dict[str, Any]) -> tuple:
     return "success", f"PRScope: Low risk ({score}/10). No security or architecture concerns."
 
 
-async def _analyze_and_publish_status(repo_url: str, pr_number: int) -> None:
+async def _analyze_and_publish_status(repo_url: str, owner: str, repo: str, pr_number: int) -> None:
     """
     The actual work a debounced webhook event runs: a full deterministic
     analysis, then a commit status reflecting the verdict - using the
@@ -509,6 +594,26 @@ async def _analyze_and_publish_status(repo_url: str, pr_number: int) -> None:
         )
     except Exception as e:
         print(f"Webhook-triggered analysis failed for {repo_url}#{pr_number}: {e}")
+
+    # Keep an already-opted-in repo's index fresh off real PR activity,
+    # instead of only refreshing on an explicit POST /index/build call.
+    # Deliberately does NOT build a fresh index for a repo that never
+    # opted in (building one is an explicit, heavier action - see
+    # /index/build) - only refreshes one that already exists and is ready.
+    repository = f"{owner}/{repo}"
+    if repository in _index_builds_in_progress:
+        return
+    db = SessionLocal()
+    try:
+        existing = db.query(RepoIndex).filter(RepoIndex.repository == repository).first()
+        if existing is not None and existing.status == "ready":
+            _index_builds_in_progress.add(repository)
+            await build_or_update_index(db, owner, repo)
+    except Exception as e:
+        print(f"Webhook-triggered index refresh failed for {repository}: {e}")
+    finally:
+        _index_builds_in_progress.discard(repository)
+        db.close()
 
 
 @router.post("/webhook/github")
@@ -543,6 +648,6 @@ async def github_webhook(request: Request):
             # each restarts this key's timer - only the last one within the
             # debounce window actually triggers analysis.
             key = f"{owner}/{repo}#{pr_number}"
-            webhook_debouncer.schedule(key, lambda: _analyze_and_publish_status(repo_url, pr_number))
+            webhook_debouncer.schedule(key, lambda: _analyze_and_publish_status(repo_url, owner, repo, pr_number))
 
     return {"status": "received"}

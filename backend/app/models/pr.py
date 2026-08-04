@@ -59,6 +59,65 @@ class ReviewEvent(Base):
 
     review = relationship("SavedReview", back_populates="events")
 
+class RepoIndex(Base):
+    """
+    Tracks a persisted, repo-wide function/call index for one repository -
+    built once (full scan of the default branch) and refreshed incrementally
+    afterward (only the files that changed since indexed_sha get re-parsed).
+    Powers cross-file "blast radius" lookups that a single PR's diff alone
+    can't see (a caller in a file the PR never touched).
+    """
+    __tablename__ = "repo_indexes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    repository = Column(String, unique=True, index=True)  # "owner/repo"
+    status = Column(String, default="pending")  # pending, indexing, ready, failed
+    indexed_sha = Column(String, nullable=True)
+    indexed_at = Column(DateTime, nullable=True)
+    file_count = Column(Integer, default=0)
+    function_count = Column(Integer, default=0)
+    error_message = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    functions = relationship("IndexedFunction", back_populates="repo_index", cascade="all, delete-orphan")
+    calls = relationship("IndexedCall", back_populates="repo_index", cascade="all, delete-orphan")
+
+
+class IndexedFunction(Base):
+    __tablename__ = "indexed_functions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    repo_index_id = Column(Integer, ForeignKey("repo_indexes.id"), index=True)
+    file_path = Column(String, index=True)
+    name = Column(String, index=True)
+
+    __table_args__ = (
+        UniqueConstraint('repo_index_id', 'file_path', 'name', name='uix_repoindex_file_func'),
+    )
+
+    repo_index = relationship("RepoIndex", back_populates="functions")
+
+
+class IndexedCall(Base):
+    """
+    One (caller_file, caller_name) -> callee_name edge, unresolved to a
+    specific callee file at write time. Cross-file blast-radius queries
+    resolve "who calls X" by matching callee_name against this table -
+    approximate (a common function name could match unrelated definitions
+    elsewhere in the repo), same bare-name-only tradeoff the PR-local call
+    graph (dependency_engine.py) already makes.
+    """
+    __tablename__ = "indexed_calls"
+
+    id = Column(Integer, primary_key=True, index=True)
+    repo_index_id = Column(Integer, ForeignKey("repo_indexes.id"), index=True)
+    caller_file_path = Column(String, index=True)
+    caller_name = Column(String, index=True)
+    callee_name = Column(String, index=True)
+
+    repo_index = relationship("RepoIndex", back_populates="calls")
+
+
 def init_db():
     try:
         Base.metadata.create_all(bind=engine)

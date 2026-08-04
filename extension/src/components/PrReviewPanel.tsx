@@ -26,6 +26,50 @@ function EnrichmentPending({ label }: { label: string }) {
   );
 }
 
+function RepoIndexStatus({
+  status,
+  updatedAt,
+  building,
+  onBuild,
+}: {
+  status: "not_indexed" | "pending" | "indexing" | "ready" | "failed" | undefined;
+  updatedAt: string | null | undefined;
+  building: boolean;
+  onBuild: () => void;
+}) {
+  const effectiveStatus = building ? "indexing" : status || "not_indexed";
+
+  return (
+    <div className="flex items-center gap-2 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] rounded-md p-3 text-xs">
+      {effectiveStatus === "indexing" || effectiveStatus === "pending" ? (
+        <>
+          <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-[#8b949e] flex-shrink-0" />
+          <span className={textSecondary}>Building full-repo index… this can take a minute for large repos.</span>
+        </>
+      ) : effectiveStatus === "ready" ? (
+        <>
+          <span className="text-[var(--color-success-fg,#3fb950)]">●</span>
+          <span className={textSecondary}>
+            Full-repo index is up to date{updatedAt ? ` (as of ${new Date(updatedAt).toLocaleString()})` : ""}.
+          </span>
+          <button onClick={onBuild} className="ml-auto underline whitespace-nowrap">Refresh</button>
+        </>
+      ) : effectiveStatus === "failed" ? (
+        <>
+          <span className="text-[var(--color-danger-fg,#da3633)]">●</span>
+          <span className={textSecondary}>Full-repo indexing failed.</span>
+          <button onClick={onBuild} className="ml-auto underline whitespace-nowrap">Retry</button>
+        </>
+      ) : (
+        <>
+          <span className={textSecondary}>No full-repo index yet - callers outside this PR&apos;s changed files aren&apos;t visible.</span>
+          <button onClick={onBuild} className="ml-auto underline whitespace-nowrap">Build Index</button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function getReviewDecision(data: PRAnalysisData): ReviewDecision {
   const { risk_score, security_findings, architecture_violations, pr_type, has_tests } = data;
   const hasSec = security_findings && security_findings.length > 0;
@@ -98,6 +142,8 @@ export function PrReviewPanel({
   const [noteSaving, setNoteSaving] = useState(false);
   const [postingComment, setPostingComment] = useState<string | null>(null);
   const [postingStatus, setPostingStatus] = useState(false);
+  const [indexBuilding, setIndexBuilding] = useState(false);
+  const [indexBuildMessage, setIndexBuildMessage] = useState<string | null>(null);
 
   const saveReviewWorkspace = async () => {
     if (!token || !data) {
@@ -172,6 +218,39 @@ export function PrReviewPanel({
       alert("Error posting comment.");
     } finally {
       setPostingComment(null);
+    }
+  };
+
+  const buildRepoIndex = async () => {
+    if (!token) {
+      alert("Please login via GitHub to build the repo index.");
+      return;
+    }
+    setIndexBuilding(true);
+    setIndexBuildMessage(null);
+    try {
+      const response = await fetch(`${apiBase}/api/analysis/index/build`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ repo_url: `https://github.com/${owner}/${repo}` }),
+      });
+      const result = await response.json();
+      if (response.ok) {
+        // The build runs in the background on the server - there's no live
+        // status feed here, so this deliberately doesn't claim it's done.
+        setIndexBuildMessage(
+          result.status === "already_in_progress"
+            ? "Index build already in progress — re-run analysis in a bit to see repo-wide results."
+            : "Index build started — re-run analysis in a bit to see repo-wide results."
+        );
+      } else {
+        setIndexBuildMessage("Failed to start index build.");
+      }
+    } catch (err) {
+      console.error(err);
+      setIndexBuildMessage("Error starting index build.");
+    } finally {
+      setIndexBuilding(false);
     }
   };
 
@@ -462,8 +541,18 @@ export function PrReviewPanel({
               <AccordionContent className="p-4 bg-[var(--bgColor-default,var(--color-canvas-default,#010409))] border-t border-[var(--borderColor-default,var(--color-border-default,#30363d))]">
                 <div className="space-y-4">
                   <p className={`text-[11px] ${textSecondary}`}>
-                    Call graph is built from Python files only, using diff context (not full file/repo contents) — coverage is naturally partial, and PRs without Python changes won&apos;t produce a graph here.
+                    Call graph is built from real file content for Python and JS/TS files. It&apos;s still scoped to this PR&apos;s own changed files by default — build a full-repo index below to also surface callers in files this PR never touched.
                   </p>
+
+                  <RepoIndexStatus
+                    status={data.impact_analysis?.dependency_graph?.repo_index_status}
+                    updatedAt={data.impact_analysis?.dependency_graph?.repo_index_updated_at}
+                    building={indexBuilding}
+                    onBuild={buildRepoIndex}
+                  />
+                  {indexBuildMessage && (
+                    <p className={`text-[11px] ${textSecondary} italic`}>{indexBuildMessage}</p>
+                  )}
                   {(() => {
                     let total_up = 0;
                     let total_down = 0;
@@ -502,6 +591,14 @@ export function PrReviewPanel({
                               {dep.called_by.map((c, idx) => <li key={idx} className="flex gap-1 break-all"><LinkIcon className="h-3 w-3 mt-0.5 flex-shrink-0 text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))]" /><span>{c}</span></li>)}
                             </ul>
                           ) : <span className="text-xs text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))]">None detected</span>}
+                          {dep.repo_wide_called_by && dep.repo_wide_called_by.length > 0 && (
+                            <div className="mt-2">
+                              <div className="text-[10px] text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] uppercase font-bold mb-1">+ Repo-Wide (outside this PR)</div>
+                              <ul className="text-xs text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] space-y-1">
+                                {dep.repo_wide_called_by.map((c, idx) => <li key={idx} className="flex gap-1 break-all"><Network className="h-3 w-3 mt-0.5 flex-shrink-0 text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))]" /><span>{c}</span></li>)}
+                              </ul>
+                            </div>
+                          )}
                         </div>
                         <div>
                           <div className="text-[10px] text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] uppercase font-bold mb-1">Calls (Downstream)</div>

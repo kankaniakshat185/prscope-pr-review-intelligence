@@ -1,8 +1,18 @@
 import asyncio
 import httpx
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from app.core.config import settings
 from app.services.treesitter_engine import is_supported_file as is_treesitter_supported
+
+
+def _json_headers() -> Dict[str, str]:
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "PRScope"
+    }
+    if settings.GITHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {settings.GITHUB_TOKEN}"
+    return headers
 
 # How many changed files (of a language we can actually parse - Python or a
 # tree-sitter-supported one) get real base/head content fetched via the
@@ -145,3 +155,52 @@ async def fetch_architecture_rules(owner: str, repo: str) -> str:
         if response.status_code == 200:
             return response.text
         return None
+
+
+async def fetch_default_branch_head_sha(owner: str, repo: str) -> Tuple[str, str]:
+    """Returns (default_branch, head_sha) - the starting point for a full or
+    incremental repo-wide index build."""
+    headers = _json_headers()
+    async with httpx.AsyncClient() as client:
+        repo_response = await client.get(f"https://api.github.com/repos/{owner}/{repo}", headers=headers)
+        repo_response.raise_for_status()
+        default_branch = repo_response.json()["default_branch"]
+
+        ref_response = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/git/refs/heads/{default_branch}", headers=headers
+        )
+        ref_response.raise_for_status()
+        return default_branch, ref_response.json()["object"]["sha"]
+
+
+async def fetch_repo_tree(owner: str, repo: str, sha: str) -> List[Dict[str, Any]]:
+    """
+    All blob paths in the repo at a given commit, via the Git Trees API
+    (recursive=1) - used for the initial full index build. GitHub caps this
+    response and sets `truncated: true` on repos too large for one call; we
+    don't paginate around that today, so a full build on a very large repo
+    may only cover part of the tree (a known, accepted limitation, same
+    spirit as MAX_FILES_FOR_CONTENT_FETCH elsewhere in this file).
+    """
+    headers = _json_headers()
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/git/trees/{sha}",
+            headers=headers,
+            params={"recursive": "1"},
+        )
+        response.raise_for_status()
+        return response.json().get("tree", [])
+
+
+async def fetch_compare(owner: str, repo: str, base_sha: str, head_sha: str) -> List[Dict[str, Any]]:
+    """Files changed between two commits (GitHub's compare API) - used to
+    scope an incremental index update to only what actually changed since
+    the last indexed commit."""
+    headers = _json_headers()
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"https://api.github.com/repos/{owner}/{repo}/compare/{base_sha}...{head_sha}", headers=headers
+        )
+        response.raise_for_status()
+        return response.json().get("files", [])

@@ -54,6 +54,18 @@ class PostStatusRequest(BaseModel):
     target_url: Optional[str] = None
     github_token: Optional[str] = None
 
+class RepoIndexRequest(BaseModel):
+    repo_url: str
+
+class RepoIndexStatusResponse(BaseModel):
+    repository: str
+    status: str  # not_indexed | pending | indexing | ready | failed
+    indexed_sha: Optional[str] = None
+    indexed_at: Optional[datetime] = None
+    file_count: int = 0
+    function_count: int = 0
+    error_message: Optional[str] = None
+
 class SavedReviewCreate(BaseModel):
     repository: str
     repository_owner: str

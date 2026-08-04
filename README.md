@@ -22,7 +22,12 @@ Architecture boundary rules (`.prscope.yml`) use the same approach: real AST-bas
 Supports highly customized, repository-specific architectural rules. The engine dynamically fetches and parses `.prscope.yml` definitions from the target repository root, allowing engineering teams to enforce strict, bespoke module boundaries and import restrictions on a per-project basis.
 
 ### Causal Dependency Mapping & Visualization
-For **Python and JS/TS files** (`.js`/`.jsx`/`.mjs`/`.cjs`/`.ts`/`.tsx`), fetches the real base and head commit content for each changed file from the GitHub Contents API and builds a call graph from the actual file (not a diff-hunk reconstruction), rendered as a visual dependency graph in the Chrome Extension UI. Because the whole file is parsed, calls made from or to code the diff didn't touch are captured correctly too — not just what's visible in the patch. Python parsing uses the `ast` module; JS/TS parsing uses [tree-sitter](https://tree-sitter.github.io/tree-sitter/) (the `tree-sitter-javascript`/`tree-sitter-typescript` grammars), so both a call like `foo()` and a method call like `this.bar()` are resolved the same way a Python `ast.Call`/`ast.Attribute` would be. This is still per-file, single-PR scope, not a full-repository index, so a caller in a different file won't show up (that requires a persisted, repo-wide call-graph index, which is a known limitation, not yet built). If real content can't be fetched (rate limits, huge PRs, deleted files), Python falls back to diff-fragment reconstruction; JS/TS files without real content are skipped entirely for the call graph rather than attempting a similarly lossy reconstruction. Other languages (Go, Java, Ruby, etc.) currently don't produce a dependency graph.
+For **Python and JS/TS files** (`.js`/`.jsx`/`.mjs`/`.cjs`/`.ts`/`.tsx`), fetches the real base and head commit content for each changed file from the GitHub Contents API and builds a call graph from the actual file (not a diff-hunk reconstruction), rendered as a visual dependency graph in the Chrome Extension UI. Because the whole file is parsed, calls made from or to code the diff didn't touch are captured correctly too — not just what's visible in the patch. Python parsing uses the `ast` module; JS/TS parsing uses [tree-sitter](https://tree-sitter.github.io/tree-sitter/) (the `tree-sitter-javascript`/`tree-sitter-typescript` grammars), so both a call like `foo()` and a method call like `this.bar()` are resolved the same way a Python `ast.Call`/`ast.Attribute` would be. By default this is still per-file, single-PR scope, not a full-repository index, so a caller in a different file won't show up — that's what the repo-wide index below is for. If real content can't be fetched (rate limits, huge PRs, deleted files), Python falls back to diff-fragment reconstruction; JS/TS files without real content are skipped entirely for the call graph rather than attempting a similarly lossy reconstruction. Other languages (Go, Java, Ruby, etc.) currently don't produce a dependency graph.
+
+### Full-Repo Index & Cross-File Blast Radius
+The "PR-local" call graph above only sees callers inside files the PR itself touched. On request (the extension's "Build Index" button, or `POST /index/build`), the backend does a one-time scan of the repository's default branch — walking the full Git tree, fetching every parseable file, and persisting every function/method definition and call edge it finds to the database (`repo_indexes`/`indexed_functions`/`indexed_calls`). Once built, every analysis of that repo enriches each modified/added function with `repo_wide_called_by`: callers found *anywhere* in the repo, not just this PR's changed files — including functions that would otherwise look "locally unconnected" and get filtered out of the report entirely. Later runs are incremental: the backend diffs the current default-branch head against the last indexed commit (GitHub's compare API) and only re-parses files that actually changed, instead of rescanning the whole repo again. A repo that has an active webhook (see below) also gets its index refreshed automatically as PR activity comes in, once it's been built at least once.
+
+Known limitations, stated plainly: callee resolution is by bare name only (same tradeoff the PR-local graph already makes), so a common function name can match unrelated definitions elsewhere in the repo — this is an approximation, not a precise reference-resolution engine. The initial full build is capped at `MAX_FILES_PER_INDEX` (500) files and relies on GitHub's tree API, which itself truncates on very large repositories. Building the index is an explicit, opt-in action — running `/analyze` on a repo never triggers one on its own.
 
 ### Stateful Review Generation
 Cross-references the pull request diff against provided Jira/Linear ticket context to ensure strict adherence to business requirements. Generates highly contextual, actionable inline comments that can be directly submitted to the GitHub timeline via the extension UI.
@@ -69,12 +74,13 @@ graph TD
         Auth[Auth: GitHub OAuth + JWT<br/>mock login gated, dev-only]
         API[Analysis API<br/>requires bearer token · split: fast /analyze + slower /analyze/enrich]
         Engines[Deterministic Engines<br/>risk · reviewability · security ·<br/>architecture · dependency graph · symbols]
+        Indexer[Repo Index Engine<br/>full + incremental, background task]
         LLMSvc[LLM Service<br/>thread-pool offloaded, timeout-bounded]
         Webhook[Webhook Receiver<br/>HMAC-SHA256 verified · debounced auto-analysis]
     end
 
     subgraph Data [Persistence]
-        DB[(SQLite or PostgreSQL<br/>users, saved reviews)]
+        DB[(SQLite or PostgreSQL<br/>users, saved reviews, repo-wide function/call index)]
         Chroma[(ChromaDB<br/>incident similarity — 3 seeded examples)]
     end
 
@@ -94,15 +100,20 @@ graph TD
     Auth --> DB
     API --> Engines
     Engines -->|fetch PR diff, files & base/head content| GH
+    Engines -.->|read: cross-file blast radius| DB
     API -->|post comments & commit statuses, user-supplied PAT| GH
     Engines --> Chroma
     API --> LLMSvc
     LLMSvc --> Gemini
     LLMSvc --> OpenAI
     API --> DB
+    API -->|explicit build/refresh request| Indexer
+    Indexer -->|fetch full tree, changed files| GH
+    Indexer -->|write: functions & call edges| DB
 
     GH -->|pull_request events| Webhook
     Webhook -->|debounced| Engines
+    Webhook -.->|refresh if already indexed| Indexer
     Webhook -->|risk verdict as commit status| GH
 ```
 
