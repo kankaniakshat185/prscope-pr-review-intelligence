@@ -422,27 +422,29 @@ export function PrReviewPanel({
 
       {data && !loading && (
         <div className="space-y-4">
-          <div className="flex items-center gap-2 mb-4">
-            <button
-              onClick={copySnapshot}
-              disabled={data.executive_summary === undefined}
-              title={data.executive_summary === undefined ? "Waiting for AI-generated content to finish" : undefined}
-              className={`flex-1 flex items-center justify-center gap-2 ${buttonStyle} whitespace-nowrap ${data.executive_summary === undefined ? "opacity-50 cursor-not-allowed" : ""}`}
-            >
-              <ClipboardCopy className="h-4 w-4" />
-              Copy Snapshot
-            </button>
-            <button
-              onClick={publishStatusToGithub}
-              disabled={postingStatus}
-              title="Publish the risk verdict as a commit status, visible in the PR's GitHub Checks section"
-              className={`flex-1 flex items-center justify-center gap-2 ${buttonStyle} whitespace-nowrap ${postingStatus ? "opacity-50 cursor-not-allowed" : ""}`}
-            >
-              <GitCommit className="h-4 w-4" />
-              {postingStatus ? "Publishing..." : "Publish Status"}
-            </button>
+          <div className="mb-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={copySnapshot}
+                disabled={data.executive_summary === undefined}
+                title={data.executive_summary === undefined ? "Waiting for AI-generated content to finish" : undefined}
+                className={`flex-1 flex items-center justify-center gap-2 ${buttonStyle} whitespace-nowrap ${data.executive_summary === undefined ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                <ClipboardCopy className="h-4 w-4" />
+                Copy Snapshot
+              </button>
+              <button
+                onClick={publishStatusToGithub}
+                disabled={postingStatus}
+                title="Publish the risk verdict as a commit status, visible in the PR's GitHub Checks section"
+                className={`flex-1 flex items-center justify-center gap-2 ${buttonStyle} whitespace-nowrap ${postingStatus ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                <GitCommit className="h-4 w-4" />
+                {postingStatus ? "Publishing..." : "Publish Status"}
+              </button>
+            </div>
             {data.pr_type && (
-              <div className={`flex-1 flex items-center justify-center px-3 py-1.5 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] rounded-md text-sm whitespace-nowrap`}>
+              <div className={`w-full flex items-center justify-center px-3 py-1.5 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] rounded-md text-sm whitespace-nowrap`}>
                 <span className="text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] mr-1.5 text-xs font-semibold uppercase tracking-wide">PR Type:</span>
                 <span className="font-medium text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">{data.pr_type}</span>
               </div>
