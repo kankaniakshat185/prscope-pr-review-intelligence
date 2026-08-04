@@ -24,7 +24,15 @@ class Settings(BaseSettings):
     # Comma-separated list of allowed CORS origins (browser extension +
     # any locally-run frontend). No wildcard: this API issues bearer
     # tokens and must not be callable from arbitrary origins.
-    ALLOWED_ORIGINS: str = "chrome-extension://jfngcklfbiljgpoeehlkpkackahgopoc,http://localhost:3000"
+    #
+    # Chrome assigns a *different* extension ID to an unpacked "Load
+    # unpacked" install than the published Chrome Web Store ID - the ID is
+    # derived from the absolute path of the unpacked folder. Loading
+    # unpacked from a new/different path will mint yet another ID and need
+    # adding here too.
+    #   jfngcklfbiljgpoeehlkpkackahgopoc - published Chrome Web Store ID
+    #   gimimplokapoleofedgmdnghpcdhkmhm - unpacked dev install
+    ALLOWED_ORIGINS: str = "chrome-extension://jfngcklfbiljgpoeehlkpkackahgopoc,chrome-extension://gimimplokapoleofedgmdnghpcdhkmhm,http://localhost:3000"
 
     class Config:
         env_file = ".env"

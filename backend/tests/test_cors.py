@@ -6,8 +6,19 @@ def test_unlisted_origin_is_not_granted_cors_access(client):
     assert r.headers.get("access-control-allow-origin") is None
 
 
-def test_allowed_extension_origin_is_granted_cors_access(client):
+def test_published_extension_origin_is_granted_cors_access(client):
     origin = "chrome-extension://jfngcklfbiljgpoeehlkpkackahgopoc"
+    r = client.options(
+        "/api/analysis/analyze",
+        headers={"Origin": origin, "Access-Control-Request-Method": "POST"},
+    )
+    assert r.headers.get("access-control-allow-origin") == origin
+
+
+def test_unpacked_dev_extension_origin_is_granted_cors_access(client):
+    # Chrome mints a different ID for "Load unpacked" than the published
+    # Web Store ID (derived from the unpacked folder's absolute path).
+    origin = "chrome-extension://gimimplokapoleofedgmdnghpcdhkmhm"
     r = client.options(
         "/api/analysis/analyze",
         headers={"Origin": origin, "Access-Control-Request-Method": "POST"},
