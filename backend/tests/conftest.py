@@ -12,8 +12,14 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client():
+    # Use TestClient as a context manager so FastAPI's startup event actually
+    # fires (init_db() creates the tables). Without this, requests still work
+    # but every DB-backed route fails with "no such table" on a fresh
+    # checkout - it only looked fine locally because a pre-existing
+    # prscope.db with tables already created was sitting on disk.
     from app.main import app
-    return TestClient(app)
+    with TestClient(app) as c:
+        yield c
 
 
 @pytest.fixture

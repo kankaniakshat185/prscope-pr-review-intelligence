@@ -1,6 +1,6 @@
 # PRScope - PR Review Intelligence
 
-[Chrome Web Store Extension Link - Coming Soon]
+[Install PRScope from the Chrome Web Store](https://chromewebstore.google.com/detail/prscope/jfngcklfbiljgpoeehlkpkackahgopoc)
 
 **Autonomous AI Senior Engineer for GitHub.**
 
@@ -29,59 +29,80 @@ Cross-references the pull request diff against provided Jira/Linear ticket conte
 Users can bypass the shared API quota pool by supplying their own Gemini or OpenAI API key, persisted in the browser's local storage. Note this storage is **not encrypted** — treat it like any other locally-cached credential, and prefer a scoped/limited-privilege key where possible.
 
 ### GitHub Webhook Ingestion (signature-verified, foundation only)
-The FastAPI backend exposes a signature-verified `pull_request` webhook receiver (`opened`, `synchronize`, `reopened`), gated by `GITHUB_WEBHOOK_SECRET`. Today it validates and logs the event; it does not yet dispatch analysis automatically. It's built as the foundation for future CI/CD-triggered background analysis (e.g. via a task queue), not a shipped feature yet.
+The FastAPI backend exposes a signature-verified `pull_request` webhook receiver (`opened`, `synchronize`, `reopened`), gated by `GITHUB_WEBHOOK_SECRET`. Requests without a valid `X-Hub-Signature-256` are rejected outright. Today it validates and logs the event; it does not yet dispatch analysis automatically. It's built as the foundation for future CI/CD-triggered background analysis (e.g. via a task queue), not a shipped feature yet.
 
 ### Resilient Inference & Rate Limit Handling
-The LLM service layer implements robust exception boundaries to handle upstream API quotas gracefully. If global rate limits (HTTP 429) are exceeded, the platform automatically degrades into a deterministic heuristic mode, ensuring risk scores and dependency graphs are reliably delivered even during inference outages.
+The LLM service layer implements robust exception boundaries to handle upstream API quotas gracefully, with bounded timeouts and thread-pool offloading so a slow provider response can't stall the whole API process. If global rate limits (HTTP 429) are exceeded, the platform automatically degrades into a deterministic heuristic mode, ensuring risk scores and dependency graphs are reliably delivered even during inference outages.
+
+## Security Model
+
+- **Login required.** Every analysis request and workspace operation requires a valid GitHub-issued session (JWT bearer token) — there is no anonymous access to `/analyze`.
+- **JWT signing key is mandatory.** `JWT_SECRET` has no default and no fallback; the backend refuses to start without it. Rotate it and every existing session is invalidated.
+- **Mock login is dev-only and off by default.** `ENABLE_MOCK_AUTH=true` unlocks a passwordless login path (`code=mock`) that skips GitHub OAuth entirely — never enable this on a deployed instance.
+- **CORS is allow-listed, not wildcard.** Only the origins in `ALLOWED_ORIGINS` (the published extension ID + any local dev origins you add) can call the API.
+- **Webhooks are signature-verified.** `GITHUB_WEBHOOK_SECRET` must be set and must match the secret configured on the GitHub webhook, or every event is rejected.
+- **BYOK keys are stored, not encrypted.** Gemini/OpenAI keys and your GitHub PAT live in the extension's local storage in plaintext. Use scoped, minimally-privileged tokens.
 
 ## System Architecture
 
-The platform follows a decoupled client-server model, ensuring the Chrome Extension remains lightweight while offloading heavy LLM inference, embedding generation, and vector storage to a distributed backend.
+The platform follows a decoupled client-server model: the Chrome Extension stays lightweight and talks to a single FastAPI backend, which owns all LLM inference, deterministic analysis, persistence, and the outbound calls to GitHub's API.
 
 ```mermaid
 graph TD
-    subgraph Client [Chrome Browser]
-        UI[Next.js React UI]
-        CS[Content Scripts]
-        BS[Background Service Worker]
-        Storage[(Local Storage)]
+    subgraph Client [Chrome Extension]
+        CS[Content Script<br/>injects iframe on github.com/*/pull/*]
+        BS[Background Worker<br/>on-demand injection]
+        UI[Next.js React UI<br/>runs inside the iframe]
+        Storage[(localStorage<br/>JWT session, BYOK keys, GitHub PAT)]
     end
 
-    subgraph Backend [FastAPI Application Layer]
-        API[API Router]
-        Auth[OAuth Provider]
-        Risk[Risk & Telemetry Engine]
-        LLM[LLM Service Abstraction]
+    subgraph Backend [FastAPI Backend]
+        CORS{CORS gate<br/>allow-listed origins only}
+        Auth[Auth: GitHub OAuth + JWT<br/>mock login gated, dev-only]
+        API[Analysis API<br/>requires bearer token]
+        Engines[Deterministic Engines<br/>risk · reviewability · security ·<br/>architecture · dependency graph · symbols]
+        LLMSvc[LLM Service<br/>thread-pool offloaded, timeout-bounded]
+        Webhook[Webhook Receiver<br/>HMAC-SHA256 verified · foundation only]
     end
 
-    subgraph Infrastructure [Data & Inference]
-        PG[(Neon PostgreSQL)]
-        Chroma[(ChromaDB Vector Store)]
+    subgraph Data [Persistence]
+        DB[(SQLite or PostgreSQL<br/>users, saved reviews)]
+        Chroma[(ChromaDB<br/>incident similarity — 3 seeded examples)]
+    end
+
+    subgraph External [External Services]
+        GH[GitHub REST API<br/>OAuth, PR data, issue comments]
         Gemini[Google Gemini API]
+        OpenAI[OpenAI API]
     end
 
-    UI <-->|DOM Injection| CS
-    CS <-->|Messaging| BS
-    BS <-->|HTTPS REST| API
-    Storage -.->|BYOK Key| BS
+    BS -->|chrome.scripting.executeScript| CS
+    CS <-->|postMessage, origin-checked both ways| UI
+    UI -->|fetch, Bearer JWT| CORS --> API
+    Storage -.->|session + BYOK keys| UI
 
     API --> Auth
-    Auth --> PG
-    API --> Risk
-    API --> LLM
+    Auth -->|OAuth code exchange| GH
+    Auth --> DB
+    API --> Engines
+    Engines -->|fetch PR diff & files| GH
+    Engines --> Chroma
+    API --> LLMSvc
+    LLMSvc --> Gemini
+    LLMSvc --> OpenAI
+    API --> DB
 
-    LLM --> Chroma
-    LLM --> Gemini
+    GH -.->|pull_request events, unwired to analysis yet| Webhook
 ```
 
 ## Usage Guide
 
 To use the PRScope extension effectively on any GitHub repository:
 
-1. **Installation:** Install the extension from the Chrome Web Store (or load the unpacked `out` directory locally).
+1. **Installation:** [Install PRScope from the Chrome Web Store](https://chromewebstore.google.com/detail/prscope/jfngcklfbiljgpoeehlkpkackahgopoc), or load the unpacked `extension/out` directory locally (see Extension Setup below).
 2. **Navigate to a PR:** Open any active Pull Request on GitHub. You will notice the PRScope interface seamlessly injected into the GitHub sidebar or as a floating panel.
-3. **Authentication:** Click the "Login with GitHub" button within the extension to securely authenticate and generate a session token.
-4. **Configure BYOK (Optional but Recommended):** Click the **Settings (⚙️)** gear icon in the top right corner of the extension and enter your personal Google Gemini API Key to bypass global rate limits and ensure unrestricted analysis.
+3. **Authentication (required):** Click "Login with GitHub" to authenticate and generate a session token. Analysis will not run until you're logged in — you'll see a "Login Required" prompt otherwise.
+4. **Configure BYOK (Optional but Recommended):** Click the **Settings (⚙️)** gear icon in the top right corner of the extension and enter your personal Gemini or OpenAI API key to bypass global rate limits and ensure unrestricted analysis. These are stored locally, unencrypted — see Security Model above.
 5. **Run Analysis:** The extension automatically reads the PR diff, context, and issue descriptions. It will present a comprehensive Risk Assessment, Dependency Graph, Security Findings, and actionable Review Comments.
 6. **Save Snapshots:** Use the "Copy Snapshot" button to instantly copy the AI-generated executive summary and findings to your clipboard, ready to be pasted as a formal GitHub review.
 
@@ -90,10 +111,10 @@ To use the PRScope extension effectively on any GitHub repository:
 To run the application locally for contribution or self-hosting, follow the steps below.
 
 ### Prerequisites
-- Python 3.10+
+- Python 3.11.x (recommended and pinned in CI — newer versions may lack prebuilt wheels for some pinned dependencies, notably `pydantic-core`)
 - Node.js 18+
-- PostgreSQL instance (or SQLite for testing)
-- Google Gemini API Key
+- PostgreSQL instance (or SQLite, the default, for local testing)
+- Google Gemini and/or OpenAI API Key
 - GitHub OAuth Application Credentials
 
 ### Backend Setup
@@ -105,21 +126,29 @@ python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-2. Install dependencies:
+2. Install dependencies (pinned — see `requirements.txt`):
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Configure environment variables in `backend/.env`:
-```env
-DATABASE_URL=postgresql://user:password@localhost:5432/prscope
-GEMINI_API_KEY=your_gemini_api_key
-GITHUB_CLIENT_ID=your_oauth_client_id
-GITHUB_CLIENT_SECRET=your_oauth_client_secret
-JWT_SECRET=secure_jwt_signing_key
+3. Configure environment variables:
+```bash
+cp .env.example .env
+```
+Then fill in `backend/.env`. At minimum you need a `JWT_SECRET` — the app will not start without one:
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+See `.env.example` for the full list (`DATABASE_URL`, `GITHUB_CLIENT_ID`/`SECRET`, `ENABLE_MOCK_AUTH`, `GITHUB_WEBHOOK_SECRET`, `ALLOWED_ORIGINS`, LLM provider keys). Notes:
+- Without a GitHub OAuth app configured, set `ENABLE_MOCK_AUTH=true` to log in locally without one — never set this in a deployed environment.
+- `ALLOWED_ORIGINS` defaults to the published extension's ID; override it if you're running your own fork/build under a different extension ID.
+
+4. Run the test suite:
+```bash
+pytest
 ```
 
-4. Initialize the server:
+5. Initialize the server:
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
@@ -142,6 +171,10 @@ npm run build
 - Enable "Developer mode"
 - Select "Load unpacked"
 - Target the `extension/out` directory generated by the build process.
+
+### CI
+
+`.github/workflows/ci.yml` runs on every push/PR to `main`: the backend job installs pinned dependencies and runs `pytest`; the extension job typechecks (`tsc --noEmit`) and builds the actual Chrome extension bundle. Linting runs too but is currently informational (`continue-on-error`) pending cleanup of a few pre-existing findings unrelated to the app code (see the workflow file for specifics).
 
 ## License
 MIT License. See `LICENSE` for more information.
