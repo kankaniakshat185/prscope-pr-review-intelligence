@@ -1,77 +1,101 @@
 import requests
 import json
 import re
-from typing import Dict, Any, List
+import time
+from typing import Dict, Any, List, Optional
 from app.core.config import settings
+
+# Retries per LLM call (both providers). Backoff is 5s, 10s, 20s between the
+# 4 attempts (35s max per call) - generous on purpose, since a single
+# analysis makes several calls back-to-back and a fresh free-tier key can
+# otherwise get rate-limited well before the analysis actually finishes.
+MAX_ATTEMPTS = 4
+BACKOFF_BASE_SECONDS = 5
+
+_RATE_LIMITED = object()  # sentinel: distinct from None (hard failure) and a real response
+
+
+def _post_with_retry(url: str, headers: dict, data: dict, provider_label: str):
+    """POST with retry-on-429 and retry-on-timeout. Returns the successful
+    requests.Response, the _RATE_LIMITED sentinel if every attempt was
+    rate-limited, or None on any other failure."""
+    last_response: Optional[requests.Response] = None
+    for attempt in range(MAX_ATTEMPTS):
+        is_last_attempt = attempt == MAX_ATTEMPTS - 1
+        try:
+            response = requests.post(url, headers=headers, json=data, timeout=30)
+        except requests.exceptions.Timeout:
+            print(f"Timed out waiting for {provider_label} API (attempt {attempt + 1}/{MAX_ATTEMPTS})")
+            if is_last_attempt:
+                return None
+            continue
+        except requests.exceptions.RequestException as e:
+            print(f"Error generating content ({provider_label}): {e}")
+            return None
+
+        if response.status_code == 200:
+            return response
+
+        if response.status_code == 429:
+            last_response = response
+            if is_last_attempt:
+                print(f"Rate limit exceeded for {provider_label} API after {MAX_ATTEMPTS} attempts")
+                return _RATE_LIMITED
+            wait = BACKOFF_BASE_SECONDS * (2 ** attempt)
+            print(f"Rate limit hit for {provider_label} (attempt {attempt + 1}/{MAX_ATTEMPTS}), backing off {wait}s...")
+            time.sleep(wait)
+            continue
+
+        print(f"Error generating content ({provider_label}): {response.text}")
+        return None
+
+    return _RATE_LIMITED if last_response is not None else None
+
 
 def generate_content(prompt: str, api_key: str = None, provider: str = "gemini") -> str:
     if provider == "openai":
         key_to_use = api_key or settings.OPENAI_API_KEY
         if not key_to_use:
             return ""
-        try:
-            url = "https://api.openai.com/v1/chat/completions"
-            headers = {
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {key_to_use}'
-            }
-            data = {
-                "model": "gpt-4o",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.1
-            }
-            response = requests.post(url, headers=headers, json=data, timeout=30)
-            if response.status_code == 200:
-                res_json = response.json()
-                return res_json['choices'][0]['message']['content']
-            elif response.status_code == 429:
-                print("Rate limit exceeded for OpenAI API")
-                return '{"error": "RATE_LIMIT_EXCEEDED"}'
-            else:
-                print(f"Error generating content (OpenAI): {response.text}")
-                return ""
-        except requests.exceptions.Timeout:
-            print("Timed out waiting for OpenAI API")
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {key_to_use}'
+        }
+        data = {
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1
+        }
+        response = _post_with_retry(url, headers, data, "OpenAI")
+        if response is _RATE_LIMITED:
+            return '{"error": "RATE_LIMIT_EXCEEDED"}'
+        if response is None:
             return ""
+        try:
+            return response.json()['choices'][0]['message']['content']
         except Exception as e:
-            print(f"Error generating content (OpenAI): {e}")
+            print(f"Error parsing OpenAI response: {e}")
             return ""
     else:
         key_to_use = api_key or settings.GEMINI_API_KEY
         if not key_to_use:
             return ""
-        import time
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key_to_use}"
+        headers = {'Content-Type': 'application/json'}
+        data = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.1}
+        }
+        response = _post_with_retry(url, headers, data, "Gemini")
+        if response is _RATE_LIMITED:
+            return '{"error": "RATE_LIMIT_EXCEEDED"}'
+        if response is None:
+            return ""
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key_to_use}"
-            headers = {'Content-Type': 'application/json'}
-            data = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.1}
-            }
-            
-            for attempt in range(3):
-                try:
-                    response = requests.post(url, headers=headers, json=data, timeout=30)
-                except requests.exceptions.Timeout:
-                    print(f"Timed out waiting for Gemini API (attempt {attempt+1})")
-                    if attempt < 2:
-                        continue
-                    return ""
-                if response.status_code == 200:
-                    res_json = response.json()
-                    return res_json['candidates'][0]['content']['parts'][0]['text']
-                elif response.status_code == 429:
-                    if attempt < 2:
-                        print(f"Rate limit hit (attempt {attempt+1}), backing off...")
-                        time.sleep(2 * (attempt + 1))
-                        continue
-                    print("Rate limit exceeded for Gemini API")
-                    return '{"error": "RATE_LIMIT_EXCEEDED"}'
-                else:
-                    print(f"Error generating content (Gemini): {response.text}")
-                    return ""
+            return response.json()['candidates'][0]['content']['parts'][0]['text']
         except Exception as e:
-            print(f"Error generating content (Gemini): {e}")
+            print(f"Error parsing Gemini response: {e}")
             return ""
 
 def parse_json_response(text: str) -> Any:
@@ -221,7 +245,23 @@ Format EXACTLY like this:
     res = generate_content(prompt, api_key, provider)
     if res and "RATE_LIMIT_EXCEEDED" not in res:
         return res
-        
+
+    provider_label = "OpenAI" if provider == "openai" else "Gemini"
+
+    if api_key:
+        # This PR's analysis used a BYOK key, and THAT key got rate-limited -
+        # not the shared pool. A single analysis makes several back-to-back
+        # LLM calls (checklist, comments, summary, jira context, plus one
+        # per security finding), which can burn through a fresh free-tier
+        # key's per-minute quota within one run.
+        return f"""### Your {provider_label} API Key Was Rate-Limited
+Your personal {provider_label} API key (not the shared PRScope pool) hit its own rate limit. A single analysis makes several AI calls in quick succession, which can exceed a free-tier key's per-minute quota - especially on PRs with multiple security findings, each of which triggers its own explanation call.
+
+### What to do
+Wait a minute and retry, or check your usage/quota in your {provider_label} account dashboard.
+
+> *Note: Deterministic security scanning, dependency intelligence, and architecture rule validations are unaffected by this limit and have executed successfully below.*"""
+
     return """### Global Rate Limit Exceeded
 The global free-tier Gemini API pool is currently experiencing exceptionally high demand and has temporarily rate-limited inference requests.
 

@@ -22,12 +22,19 @@ from app.services.reviewability_engine import calculate_reviewability
 from app.services.auth import create_access_token, verify_token
 from app.core.config import settings
 from datetime import datetime
+import asyncio
 import json
 import httpx
 import hashlib
 import hmac
 
 router = APIRouter()
+
+# Gap between successive LLM calls within one analysis. A single analysis
+# makes several calls back-to-back (one per security finding, plus checklist/
+# comments/summary/jira); spacing them out reduces the odds of tripping a
+# free-tier per-minute quota, at the cost of a slower (but reliable) analysis.
+LLM_CALL_SPACING_SECONDS = 5
 
 def get_db():
     db = SessionLocal()
@@ -192,7 +199,9 @@ async def analyze_pr(request: PRAnalysisRequest, user_id: int = Depends(verify_t
             for finding in raw_findings:
                 enriched = await run_in_threadpool(explain_security_finding, finding, active_key, provider)
                 security_findings.append(enriched)
-                
+                await asyncio.sleep(LLM_CALL_SPACING_SECONDS)
+
+
         # 5. Architecture & Similarity
         rules_yaml = request.custom_rules_yaml
         if not rules_yaml:
@@ -224,8 +233,11 @@ async def analyze_pr(request: PRAnalysisRequest, user_id: int = Depends(verify_t
         # (each makes a blocking HTTP call; run_in_threadpool keeps the event
         # loop free for other requests instead of stalling the whole server)
         checklist = await run_in_threadpool(generate_review_checklist, pr_context, active_key, provider)
+        await asyncio.sleep(LLM_CALL_SPACING_SECONDS)
         comments = await run_in_threadpool(generate_review_comments, pr_context, active_key, provider)
+        await asyncio.sleep(LLM_CALL_SPACING_SECONDS)
         exec_summary = await run_in_threadpool(generate_executive_summary, pr_context, active_key, provider)
+        await asyncio.sleep(LLM_CALL_SPACING_SECONDS)
         jira_context = await run_in_threadpool(extract_jira_context, pr_data, active_key, provider)
 
         return PRAnalysisResponse(
