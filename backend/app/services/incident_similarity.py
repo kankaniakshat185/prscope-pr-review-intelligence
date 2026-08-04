@@ -9,10 +9,18 @@ def get_chroma_client():
     return chromadb.PersistentClient(path=settings.CHROMA_DB_DIR)
 
 def init_mock_incidents():
-    # Initialize some mock incidents if collection is empty
+    """
+    STUB: seeds exactly three hand-written example incidents so
+    find_similar_incidents() has something to match against. This is not a
+    real incident database or an ingestion pipeline - matches will only ever
+    be against these three canned entries until real incident data is wired
+    up. Called from main.py's startup event, not at import time, so that
+    importing this module never has side effects (creating a Chroma client
+    and writing to disk) on its own.
+    """
     client = get_chroma_client()
     collection = client.get_or_create_collection(name="incidents")
-    
+
     if collection.count() == 0:
         collection.add(
             documents=[
@@ -27,9 +35,6 @@ def init_mock_incidents():
             ],
             ids=["INC-001", "INC-002", "INC-003"]
         )
-
-# Initialize on startup
-init_mock_incidents()
 
 def find_similar_incidents(pr_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     client = get_chroma_client()

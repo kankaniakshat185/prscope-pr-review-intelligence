@@ -4,7 +4,7 @@
 
 **Autonomous AI Senior Engineer for GitHub.**
 
-PRScope is a full-stack Chrome Extension and FastAPI platform that performs instant, comprehensive pull request reviews natively within the GitHub UI. It acts as an autonomous agent that deeply analyzes structural code changes, catches zero-day vulnerabilities, maps downstream dependency impacts, and generates actionable, 1-click inline code comments using advanced LLM reasoning.
+PRScope is a full-stack Chrome Extension and FastAPI platform that performs instant, comprehensive pull request reviews natively within the GitHub UI. It acts as an autonomous agent that deeply analyzes structural code changes, flags common known-vulnerability patterns, maps downstream dependency impacts, and generates actionable, 1-click inline code comments using advanced LLM reasoning.
 
 Built for high-velocity engineering teams, PRScope significantly reduces the cognitive overhead required to review massive legacy refactors, complex dependency chains, and subtle architectural anti-patterns. Stop blindly merging code and gain deterministic x-ray vision into every pull request.
 
@@ -14,22 +14,22 @@ Built for high-velocity engineering teams, PRScope significantly reduces the cog
 Generates a quantifiable Risk Score (1-10) and a Reviewability Index based on rigid heuristics rather than stochastic LLM generation. Evaluates factors such as Line of Code (LOC) volatility, symbol modification density, test coverage deltas, and PR description fidelity to triage the risk of a merge.
 
 ### Automated Security & Architecture Auditing
-Detects common exploitation vectors and architectural abstraction leaks. It systematically flags structural code violations against established design patterns (e.g., SOLID, DRY) and highlights potential zero-day entry points introduced in the diff.
+Scans added lines in the diff against a deterministic set of pattern rules (hardcoded credentials, `eval`/`exec`, `shell=True`, unsafe deserialization, f-string SQL interpolation, and similar known-bad patterns) and flags configured module-boundary/import violations. This is single-line pattern matching, not a full SAST engine — it won't catch multi-line, obfuscated, or otherwise disguised issues, and it doesn't detect unknown ("zero-day") vulnerability classes by design.
 
 ### Dynamic Architecture Verification (.prscope.yml)
 Supports highly customized, repository-specific architectural rules. The engine dynamically fetches and parses `.prscope.yml` definitions from the target repository root, allowing engineering teams to enforce strict, bespoke module boundaries and import restrictions on a per-project basis.
 
 ### Causal Dependency Mapping & Visualization
-Constructs an abstract syntax tree representation of the modifications to map upstream service dependencies and downstream module impacts. Identifies exactly which components of the codebase are at risk of cascading failure and renders a dynamic, visual dependency graph directly within the Chrome Extension UI.
+Parses the diff to build a best-effort call graph for **Python files** and renders it as a visual dependency graph in the Chrome Extension UI. The graph is built from diff context only (not the full file or full repository), so accuracy is naturally limited to what's visible in the patch, and non-Python files currently don't produce a dependency graph.
 
 ### Stateful Review Generation
 Cross-references the pull request diff against provided Jira/Linear ticket context to ensure strict adherence to business requirements. Generates highly contextual, actionable inline comments that can be directly submitted to the GitHub timeline via the extension UI.
 
 ### Bring Your Own Key (BYOK) Architecture
-Engineered with a primary focus on data sovereignty. Users can bypass the public API quota pool by locally persisting their own Gemini API keys via secure browser storage, enabling unlimited, unrestricted model inference.
+Users can bypass the shared API quota pool by supplying their own Gemini or OpenAI API key, persisted in the browser's local storage. Note this storage is **not encrypted** — treat it like any other locally-cached credential, and prefer a scoped/limited-privilege key where possible.
 
-### Asynchronous Webhook Integration
-Engineered for scale, the FastAPI backend features native GitHub Webhook ingestion. The platform autonomously listens for `pull_request` lifecycle events (opened, synchronized, reopened) to trigger background analysis, paving the way for CI/CD integration and decoupled task queue processing.
+### GitHub Webhook Ingestion (signature-verified, foundation only)
+The FastAPI backend exposes a signature-verified `pull_request` webhook receiver (`opened`, `synchronize`, `reopened`), gated by `GITHUB_WEBHOOK_SECRET`. Today it validates and logs the event; it does not yet dispatch analysis automatically. It's built as the foundation for future CI/CD-triggered background analysis (e.g. via a task queue), not a shipped feature yet.
 
 ### Resilient Inference & Rate Limit Handling
 The LLM service layer implements robust exception boundaries to handle upstream API quotas gracefully. If global rate limits (HTTP 429) are exceeded, the platform automatically degrades into a deterministic heuristic mode, ensuring risk scores and dependency graphs are reliably delivered even during inference outages.

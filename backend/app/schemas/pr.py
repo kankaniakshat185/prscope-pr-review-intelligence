@@ -23,20 +23,8 @@ class PRAnalysisResponse(BaseModel):
     security_findings: List[Dict[str, Any]] = []
     pr_type: Optional[str] = None
     reviewability: Optional[Dict[str, Any]] = None
-
-class ReviewNoteBase(BaseModel):
-    repo_url: str
-    pr_number: int
-    status: str
-    notes: str
-
-class ReviewNoteResponse(ReviewNoteBase):
-    id: int
-    created_at: Any
-    updated_at: Any
-
-    class Config:
-        orm_mode = True
+    pr_title: Optional[str] = None
+    has_tests: bool = False
 
 class PostCommentRequest(BaseModel):
     repo_url: str

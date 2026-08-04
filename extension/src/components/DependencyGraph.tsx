@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
+import type { DependencyGraphData } from "@/lib/types";
 
 // Dynamically import ForceGraph2D with SSR disabled
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
@@ -11,7 +12,7 @@ const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
 type GraphNode = { id: string; name: string; val: number; color: string };
 type GraphLink = { source: string; target: string };
 
-export default function DependencyGraph({ graphData }: { graphData: any }) {
+export default function DependencyGraph({ graphData }: { graphData: DependencyGraphData }) {
   const [data, setData] = useState<{ nodes: GraphNode[]; links: GraphLink[] }>({ nodes: [], links: [] });
 
   useEffect(() => {
@@ -21,7 +22,7 @@ export default function DependencyGraph({ graphData }: { graphData: any }) {
     const links: GraphLink[] = [];
 
     // Add nodes and edges
-    graphData.modified_functions.forEach((func: any) => {
+    graphData.modified_functions.forEach((func) => {
       if (!nodesMap.has(func.function)) {
         nodesMap.set(func.function, { id: func.function, name: func.function, val: 1.5, color: "#da3633" });
       }
@@ -56,7 +57,7 @@ export default function DependencyGraph({ graphData }: { graphData: any }) {
       <ForceGraph2D
         graphData={data}
         nodeLabel="name"
-        nodeColor={(node: any) => node.color}
+        nodeColor={(node) => (node as GraphNode).color}
         nodeRelSize={4}
         width={340} 
         height={300}

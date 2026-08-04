@@ -9,14 +9,15 @@
 !.env.example
 
 # Python / Backend
-backend/__pycache__/
+**/__pycache__/
 backend/*.py[cod]
 backend/*$py.class
-backend/.pytest_cache/
+**/.pytest_cache/
 backend/chroma_db/
 backend/venv/
 backend/env/
 *.sqlite3
+*.db
 
 # Node / Extension
 extension/node_modules/

@@ -1,4 +1,15 @@
 from typing import Dict, Any, List
+from app.services.scoring_constants import (
+    LOC_MASSIVE, LOC_LARGE, LOC_MODERATE,
+    FILES_MASSIVE, FILES_LARGE, FILES_MODERATE,
+    SYMBOLS_LARGE, SYMBOLS_MODERATE,
+    CALLERS_HIGH, CALLERS_MODERATE,
+    SERVICES_WIDESPREAD,
+    CRITICAL_DIRS,
+    RISK_HIGH_THRESHOLD, RISK_MEDIUM_THRESHOLD,
+)
+
+LOC_LARGE_NO_TESTS_THRESHOLD = 500  # separate from LOC_LARGE (501): this gates the "no tests on a large change" penalty specifically
 
 def calculate_risk(
     pr_data: Dict[str, Any],
@@ -25,29 +36,29 @@ def calculate_risk(
     files = pr_data.get("files", [])
     
     # 1. LOC Scoring
-    if total_loc >= 1000:
+    if total_loc >= LOC_MASSIVE:
         score += 3
         factors.append({"name": "Massive LOC Change", "weight": 3, "reason": f"{total_loc} lines changed"})
-    elif total_loc >= 501:
+    elif total_loc >= LOC_LARGE:
         score += 2
         factors.append({"name": "Large LOC Change", "weight": 2, "reason": f"{total_loc} lines changed"})
-    elif total_loc >= 101:
+    elif total_loc >= LOC_MODERATE:
         score += 1
         factors.append({"name": "Moderate LOC Change", "weight": 1, "reason": f"{total_loc} lines changed"})
-        
+
     # 2. Files Changed
-    if changed_files >= 50:
+    if changed_files >= FILES_MASSIVE:
         score += 3
         factors.append({"name": "Massive File Surface", "weight": 3, "reason": f"{changed_files} files changed"})
-    elif changed_files >= 21:
+    elif changed_files >= FILES_LARGE:
         score += 2
         factors.append({"name": "Large File Surface", "weight": 2, "reason": f"{changed_files} files changed"})
-    elif changed_files >= 11:
+    elif changed_files >= FILES_MODERATE:
         score += 1
         factors.append({"name": "Moderate File Surface", "weight": 1, "reason": f"{changed_files} files changed"})
-        
+
     # 3. Critical Path Scoring
-    critical_dirs = ["backend/auth", "backend/payment", "backend/core", "backend/security", "core", "auth", "payment", "security"]
+    critical_dirs = CRITICAL_DIRS
     touched_critical = set()
     has_tests = False
     
@@ -70,7 +81,7 @@ def calculate_risk(
     # 4. Test Coverage Signal
     if pr_type in ["BACKEND", "FRONTEND", "SECURITY", "DATABASE", "INFRASTRUCTURE", "MIXED"]:
         if total_loc > 0 and not has_tests:
-            if total_loc > 500:
+            if total_loc > LOC_LARGE_NO_TESTS_THRESHOLD:
                 score += 2
                 factors.append({"name": "No Tests Updated (Large Change)", "weight": 2, "reason": "No test files modified for >500 LOC change"})
             else:
@@ -110,10 +121,10 @@ def calculate_risk(
     num_symbols += len(changed_symbols.get("functions_removed", []))
     num_symbols += len(changed_symbols.get("classes_modified", []))
     
-    if num_symbols >= 11:
+    if num_symbols >= SYMBOLS_LARGE:
         score += 2
         factors.append({"name": "Large Symbol Surface", "weight": 2, "reason": f"{num_symbols} symbols modified"})
-    elif num_symbols >= 6:
+    elif num_symbols >= SYMBOLS_MODERATE:
         score += 1
         factors.append({"name": "Moderate Symbol Surface", "weight": 1, "reason": f"{num_symbols} symbols modified"})
         
@@ -125,17 +136,17 @@ def calculate_risk(
             downstream_callers.add(caller)
             
     num_callers = len(downstream_callers)
-    if num_callers >= 11:
+    if num_callers >= CALLERS_HIGH:
         score += 2
         factors.append({"name": "High Dependency Impact", "weight": 2, "reason": f"{num_callers} downstream callers affected"})
-    elif num_callers >= 6:
+    elif num_callers >= CALLERS_MODERATE:
         score += 1
         factors.append({"name": "Moderate Dependency Impact", "weight": 1, "reason": f"{num_callers} downstream callers affected"})
         
     # 9. Multi-Service Impact
     affected_services = dependency_impact.get("affected_services", [])
     num_services = len(affected_services)
-    if num_services >= 3:
+    if num_services >= SERVICES_WIDESPREAD:
         score += 2
         factors.append({"name": "Widespread Service Impact", "weight": 2, "reason": f"{num_services} services impacted"})
     elif num_services == 2:
@@ -145,9 +156,9 @@ def calculate_risk(
     # 10. Risk Normalization & Categories
     score = min(10, score)
     
-    if score >= 6:
+    if score >= RISK_HIGH_THRESHOLD:
         category = "High Risk"
-    elif score >= 3:
+    elif score >= RISK_MEDIUM_THRESHOLD:
         category = "Medium Risk"
     else:
         category = "Low Risk"

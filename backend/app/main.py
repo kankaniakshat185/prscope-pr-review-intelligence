@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api import api_router
 from app.models.pr import init_db
+from app.services.incident_similarity import init_mock_incidents
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -21,6 +22,7 @@ app.include_router(api_router, prefix="/api")
 @app.on_event("startup")
 def on_startup():
     init_db()
+    init_mock_incidents()
 
 @app.get("/")
 def read_root():

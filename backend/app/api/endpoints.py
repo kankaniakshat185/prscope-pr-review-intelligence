@@ -2,9 +2,9 @@ from fastapi import APIRouter, HTTPException, Depends, Security
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import String
 from sqlalchemy.orm import Session
-from app.models.pr import SessionLocal, PRAnalysisResult, ReviewNote, User, SavedReview, ReviewEvent
+from app.models.pr import SessionLocal, User, SavedReview, ReviewEvent
 from app.schemas.pr import (
-    PRAnalysisRequest, PRAnalysisResponse, ReviewNoteBase, ReviewNoteResponse, 
+    PRAnalysisRequest, PRAnalysisResponse,
     PostCommentRequest, SavedReviewCreate, SavedReviewResponse, ReviewEventResponse
 )
 from app.services.github import fetch_pr_data, fetch_architecture_rules
@@ -151,8 +151,12 @@ async def analyze_pr(request: PRAnalysisRequest, user_id: int = Depends(verify_t
         provider = request.ai_provider
 
         pr_data = await fetch_pr_data(request.repo_url, request.pr_number)
-        
+
         pr_type = classify_pr(pr_data.get('files', []))
+        has_tests = any(
+            "test" in f.get("filename", "").lower() or f.get("filename", "").startswith("tests/")
+            for f in pr_data.get('files', [])
+        )
         
         # 2. Extract changed symbols
         symbols = analyze_symbols(pr_data)
@@ -236,7 +240,9 @@ async def analyze_pr(request: PRAnalysisRequest, user_id: int = Depends(verify_t
             changed_symbols=symbols,
             security_findings=security_findings,
             pr_type=pr_context.get('pr_type'),
-            reviewability=reviewability
+            reviewability=reviewability,
+            pr_title=pr_data.get('title', ''),
+            has_tests=has_tests
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -338,40 +344,6 @@ def get_review_events(review_id: int, user_id: int = Depends(verify_token), db: 
     return events
 
 
-# ==================================================
-# LEGACY ROUTES
-# ==================================================
-
-@router.post("/note", response_model=ReviewNoteResponse)
-def save_review_note(note: ReviewNoteBase, db: Session = Depends(get_db)):
-    existing = db.query(ReviewNote).filter(
-        ReviewNote.repo_url == note.repo_url,
-        ReviewNote.pr_number == note.pr_number
-    ).first()
-
-    if existing:
-        existing.status = note.status
-        existing.notes = note.notes
-        db.commit()
-        db.refresh(existing)
-        return existing
-
-    new_note = ReviewNote(**note.dict())
-    db.add(new_note)
-    db.commit()
-    db.refresh(new_note)
-    return new_note
-
-@router.get("/note", response_model=ReviewNoteResponse)
-def get_review_note(repo_url: str, pr_number: int, db: Session = Depends(get_db)):
-    existing = db.query(ReviewNote).filter(
-        ReviewNote.repo_url == repo_url,
-        ReviewNote.pr_number == pr_number
-    ).first()
-    if existing:
-        return existing
-    raise HTTPException(status_code=404, detail="Note not found")
-
 @router.post("/post-comment")
 async def post_comment(req: PostCommentRequest):
     try:
@@ -379,11 +351,6 @@ async def post_comment(req: PostCommentRequest):
         return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/history")
-def get_history(repo_url: str, db: Session = Depends(get_db)):
-    results = db.query(PRAnalysisResult).filter(PRAnalysisResult.repo_url == repo_url).order_by(PRAnalysisResult.created_at.desc()).all()
-    return results
 
 # ==================================================
 # WEBHOOKS

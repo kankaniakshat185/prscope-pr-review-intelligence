@@ -1,4 +1,9 @@
 from typing import Dict, Any, List
+from app.services.scoring_constants import (
+    LOC_REVIEWABLE_SMALL, LOC_REVIEWABLE_MEDIUM, LOC_REVIEWABLE_LARGE,
+    FILES_REVIEWABLE_FEW,
+    DESCRIPTION_GOOD_LENGTH,
+)
 
 def calculate_reviewability(
     pr_data: Dict[str, Any],
@@ -14,7 +19,7 @@ def calculate_reviewability(
     
     # 1. PR Description
     desc = pr_data.get("description", "")
-    if desc and len(desc) > 20:
+    if desc and len(desc) > DESCRIPTION_GOOD_LENGTH:
         score += 2
         factors.append({"name": "Good PR description", "weight": 2, "reason": "Description is present and sufficiently detailed."})
     elif desc:
@@ -37,13 +42,13 @@ def calculate_reviewability(
     deletions = pr_data.get("deletions", 0)
     total_loc = additions + deletions
     
-    if total_loc < 100:
+    if total_loc < LOC_REVIEWABLE_SMALL:
         score += 3
         factors.append({"name": "Very small scope", "weight": 3, "reason": f"Only {total_loc} lines changed."})
-    elif total_loc < 300:
+    elif total_loc < LOC_REVIEWABLE_MEDIUM:
         score += 2
         factors.append({"name": "Small scope", "weight": 2, "reason": f"Only {total_loc} lines changed."})
-    elif total_loc < 1000:
+    elif total_loc < LOC_REVIEWABLE_LARGE:
         score += 1
         factors.append({"name": "Medium scope", "weight": 1, "reason": f"{total_loc} lines changed."})
     else:
@@ -51,7 +56,7 @@ def calculate_reviewability(
         
     # 4. Number of Files
     changed_files = pr_data.get("changed_files", 0)
-    if changed_files < 10:
+    if changed_files < FILES_REVIEWABLE_FEW:
         score += 1
         factors.append({"name": "Few files changed", "weight": 1, "reason": f"Only {changed_files} files changed."})
     else:

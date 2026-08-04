@@ -91,8 +91,12 @@
   });
 
 
-  // Listen for clipboard copy requests from the iframe
+  // Listen for messages from the injected iframe only. Checking event.source
+  // (rather than a string origin) confirms the message came from exactly
+  // this iframe, not any other frame/extension page.
   window.addEventListener("message", (event) => {
+    if (event.source !== iframe.contentWindow) return;
+
     if (event.data && event.data.type === "COPY_TO_CLIPBOARD") {
       navigator.clipboard.writeText(event.data.text).catch(err => {
         const textarea = document.createElement("textarea");
@@ -123,7 +127,10 @@
       }
     }
     style += "}";
-    iframe.contentWindow.postMessage({ type: "SYNC_THEME", style }, "*");
+    // Target the extension's own origin explicitly (derived from newSrc)
+    // instead of "*", so the theme payload can't be read by anything else
+    // that might end up listening on the iframe's window.
+    iframe.contentWindow.postMessage({ type: "SYNC_THEME", style }, new URL(newSrc).origin);
   }
   
   // Also send theme on load and on DOM mutation
