@@ -10,6 +10,18 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    # The rate limiter is process-global, in-memory state. Without resetting
+    # it between tests, tests sharing the same mock user (most of them) would
+    # accumulate requests against each other and start failing depending on
+    # run order/count - not a bug in the limiter, just shared test state.
+    from app.services.rate_limiter import analyze_rate_limiter
+    analyze_rate_limiter.reset()
+    yield
+    analyze_rate_limiter.reset()
+
+
 @pytest.fixture
 def client():
     # Use TestClient as a context manager so FastAPI's startup event actually

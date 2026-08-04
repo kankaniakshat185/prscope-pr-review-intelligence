@@ -20,6 +20,7 @@ from app.services.security_engine import analyze_security
 from app.services.dependency_engine import build_dependency_graph
 from app.services.reviewability_engine import calculate_reviewability
 from app.services.auth import create_access_token, verify_token
+from app.services.rate_limiter import rate_limited_user
 from app.core.config import settings
 from datetime import datetime
 import asyncio
@@ -35,6 +36,11 @@ router = APIRouter()
 # comments/summary/jira); spacing them out reduces the odds of tripping a
 # free-tier per-minute quota, at the cost of a slower (but reliable) analysis.
 LLM_CALL_SPACING_SECONDS = 5
+
+# security_engine.analyze_security has no cap on how many findings it can
+# return; without a limit here, a messy PR could trigger dozens of AI-
+# explanation calls and blow well past any reasonable analysis time budget.
+MAX_AI_EXPLAINED_FINDINGS = 10
 
 def get_db():
     db = SessionLocal()
@@ -150,7 +156,7 @@ async def github_callback(code: str, db: Session = Depends(get_db)):
 # ==================================================
 
 @router.post("/analyze", response_model=PRAnalysisResponse)
-async def analyze_pr(request: PRAnalysisRequest, user_id: int = Depends(verify_token)):
+async def analyze_pr(request: PRAnalysisRequest, user_id: int = Depends(rate_limited_user)):
     from app.services.context_builder import classify_pr
     
     try:
@@ -196,10 +202,18 @@ async def analyze_pr(request: PRAnalysisRequest, user_id: int = Depends(verify_t
             # Enrich with Gemini Explanations
             # (offloaded to a thread pool: explain_security_finding makes a
             # blocking HTTP call and must not run directly on the event loop)
-            for finding in raw_findings:
-                enriched = await run_in_threadpool(explain_security_finding, finding, active_key, provider)
-                security_findings.append(enriched)
-                await asyncio.sleep(LLM_CALL_SPACING_SECONDS)
+            #
+            # Findings beyond MAX_AI_EXPLAINED_FINDINGS still appear with their
+            # deterministic detection (name/severity/file/snippet) - they just
+            # skip the extra AI call, bounding worst-case analysis time on PRs
+            # with many findings instead of it scaling unboundedly.
+            for i, finding in enumerate(raw_findings):
+                if i < MAX_AI_EXPLAINED_FINDINGS:
+                    enriched = await run_in_threadpool(explain_security_finding, finding, active_key, provider)
+                    security_findings.append(enriched)
+                    await asyncio.sleep(LLM_CALL_SPACING_SECONDS)
+                else:
+                    security_findings.append(finding)
 
 
         # 5. Architecture & Similarity

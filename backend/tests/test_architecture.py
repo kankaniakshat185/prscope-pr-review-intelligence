@@ -45,3 +45,57 @@ def test_custom_rules_yaml_is_respected():
     violations = validate_architecture(pr_data, custom_rules)
     assert len(violations) == 1
     assert violations[0]["rule"] == "billing cannot import frontend"
+
+
+def test_python_files_use_ast_detection_and_ignore_string_literal_mentions():
+    # Regex, matching purely on line text, would have flagged the line
+    # "import payment example usage" below since it starts with "import" and
+    # contains "payment" - even though it's just the contents of a triple-
+    # quoted string, not a real import statement. AST-based detection knows
+    # the difference.
+    pr_data = {
+        "files": [
+            {
+                "filename": "auth/login.py",
+                "patch": (
+                    "@@ -1,2 +1,5 @@\n"
+                    " import os\n"
+                    "+DOCS = \"\"\"\n"
+                    "+import payment example usage\n"
+                    "+\"\"\"\n"
+                ),
+            }
+        ]
+    }
+    assert validate_architecture(pr_data) == []
+
+
+def test_falls_back_to_regex_when_python_fragment_does_not_parse():
+    # This reconstructed fragment is not valid Python on its own (unclosed
+    # paren), so AST parsing fails - the module should still catch the
+    # restricted import via the regex fallback rather than silently missing it.
+    pr_data = {
+        "files": [
+            {
+                "filename": "auth/login.py",
+                "patch": "@@ -1,2 +1,3 @@\n def foo(\n+    import payment\n",
+            }
+        ]
+    }
+    violations = validate_architecture(pr_data)
+    assert len(violations) == 1
+    assert violations[0]["rule"] == "auth cannot import payment"
+
+
+def test_non_python_files_still_use_regex_detection():
+    pr_data = {
+        "files": [
+            {
+                "filename": "frontend/db.ts",
+                "patch": "@@ -1,2 +1,3 @@\n import React from 'react'\n+import db from 'database'\n",
+            }
+        ]
+    }
+    violations = validate_architecture(pr_data)
+    assert len(violations) == 1
+    assert violations[0]["rule"] == "frontend cannot import database"
