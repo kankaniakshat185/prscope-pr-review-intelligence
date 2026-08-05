@@ -7,6 +7,7 @@ class PRAnalysisRequest(BaseModel):
     pr_number: int
     gemini_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
+    groq_api_key: Optional[str] = None
     ai_provider: str = "gemini"
     custom_rules_yaml: Optional[str] = None
 

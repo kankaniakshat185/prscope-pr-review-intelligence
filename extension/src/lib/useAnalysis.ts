@@ -13,6 +13,7 @@ export function useAnalysis(apiBase: string, token: string | null) {
     pr_number: parseInt(pr, 10),
     gemini_api_key: localStorage.getItem("prscope_gemini_key") || undefined,
     openai_api_key: localStorage.getItem("prscope_openai_key") || undefined,
+    groq_api_key: localStorage.getItem("prscope_groq_key") || undefined,
     ai_provider: localStorage.getItem("prscope_ai_provider") || "gemini",
     custom_rules_yaml: customRulesYaml || undefined,
   });

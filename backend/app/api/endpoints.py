@@ -14,7 +14,7 @@ from app.services.github import fetch_pr_data, fetch_architecture_rules, fetch_p
 from app.services.github_status import post_commit_status
 from app.services.risk_engine import calculate_risk
 from app.services.context_builder import build_pr_context
-from app.services.llm import generate_review_checklist, generate_review_comments, generate_executive_summary, extract_jira_context, explain_security_finding
+from app.services.llm import generate_review_bundle, explain_security_findings_batch
 from app.services.symbols_analysis import analyze_symbols
 from app.services.github_comments import post_review_comment
 from app.services.impact_analysis import analyze_impact
@@ -299,44 +299,46 @@ async def enrich_pr_analysis(request: PRAnalysisRequest, user_id: int = Depends(
     can render deterministic results immediately instead of blocking on
     this - which can legitimately take a minute or more with the retry/
     backoff logic in llm.py.
+
+    Only ever makes at most 2 LLM calls total (one batched explanation call
+    for security findings, one combined call for checklist/comments/
+    summary/jira) instead of up to ~14 separate ones - see
+    explain_security_findings_batch and generate_review_bundle in llm.py.
+    That's the main lever against exhausting a shared free-tier key's quota.
     """
     try:
-        active_key = request.openai_api_key if request.ai_provider == "openai" else request.gemini_api_key
+        active_key = {
+            "openai": request.openai_api_key,
+            "groq": request.groq_api_key,
+        }.get(request.ai_provider, request.gemini_api_key)
         provider = request.ai_provider
 
         pr_data = await fetch_pr_data(request.repo_url, request.pr_number)
         result = await _run_deterministic_pipeline(pr_data, request.custom_rules_yaml)
 
-        security_findings = []
         # Findings beyond MAX_AI_EXPLAINED_FINDINGS still appear with their
-        # deterministic detection (name/severity/file/snippet) - they just
-        # skip the extra AI call, bounding worst-case analysis time on PRs
-        # with many findings instead of it scaling unboundedly.
-        for i, finding in enumerate(result["security_findings"]):
-            if i < MAX_AI_EXPLAINED_FINDINGS:
-                enriched = await run_in_threadpool(explain_security_finding, finding, active_key, provider)
-                security_findings.append(enriched)
-                await asyncio.sleep(LLM_CALL_SPACING_SECONDS)
-            else:
-                security_findings.append(finding)
+        # deterministic detection (name/severity/file/snippet) - they're
+        # just excluded from the batch explanation call, bounding its
+        # prompt/output size on PRs with many findings.
+        findings_to_explain = result["security_findings"][:MAX_AI_EXPLAINED_FINDINGS]
+        findings_overflow = result["security_findings"][MAX_AI_EXPLAINED_FINDINGS:]
+
+        explained = await run_in_threadpool(explain_security_findings_batch, findings_to_explain, active_key, provider)
+        security_findings = explained + findings_overflow
+        if findings_to_explain:
+            await asyncio.sleep(LLM_CALL_SPACING_SECONDS)
 
         pr_context = build_pr_context(pr_data, result["risk_score"], result["impact"], result["arch_violations"])
 
-        # (each makes a blocking HTTP call; run_in_threadpool keeps the event
-        # loop free for other requests instead of stalling the whole server)
-        checklist = await run_in_threadpool(generate_review_checklist, pr_context, active_key, provider)
-        await asyncio.sleep(LLM_CALL_SPACING_SECONDS)
-        comments = await run_in_threadpool(generate_review_comments, pr_context, active_key, provider)
-        await asyncio.sleep(LLM_CALL_SPACING_SECONDS)
-        exec_summary = await run_in_threadpool(generate_executive_summary, pr_context, active_key, provider)
-        await asyncio.sleep(LLM_CALL_SPACING_SECONDS)
-        jira_context = await run_in_threadpool(extract_jira_context, pr_data, active_key, provider)
+        # (blocking HTTP call; run_in_threadpool keeps the event loop free
+        # for other requests instead of stalling the whole server)
+        bundle = await run_in_threadpool(generate_review_bundle, pr_context, pr_data, active_key, provider)
 
         return PREnrichmentResponse(
-            review_checklist=checklist,
-            suggested_comments=comments,
-            jira_context=jira_context,
-            executive_summary=exec_summary,
+            review_checklist=bundle["review_checklist"],
+            suggested_comments=bundle["suggested_comments"],
+            jira_context=bundle["jira_context"],
+            executive_summary=bundle["executive_summary"],
             security_findings=security_findings,
         )
     except Exception as e:

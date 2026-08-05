@@ -66,7 +66,8 @@ Built for high-velocity engineering teams, PRScope significantly reduces the cog
 - Uses the Statuses API, not the newer Checks API (which needs a full GitHub App) — simpler, at the cost of a plain single-line status instead of rich inline annotations
 
 ### Bring Your Own Key (BYOK) Architecture
-- Bypass the shared quota pool with your own Gemini/OpenAI key, stored in browser local storage
+- Bypass the shared quota pool with your own Gemini, OpenAI, or Groq key, stored in browser local storage
+- Groq is a genuinely free, generously-rate-limited option if you don't already have a key elsewhere — an OpenAI-compatible API, so it reuses the same request path as the OpenAI provider
 - **Not encrypted** — treat it like any other locally-cached credential; prefer scoped/limited-privilege keys
 
 ### GitHub Webhook Ingestion (CI-style automated analysis)
@@ -76,8 +77,9 @@ Built for high-velocity engineering teams, PRScope significantly reduces the cog
 - Runs as an in-process `asyncio` task — fine for one backend instance, wouldn't coordinate across multiple replicas without a shared store
 
 ### Resilient Inference & Rate Limit Handling
-- Bounded timeouts, retry-with-backoff on both LLM providers, thread-pool offloading so a slow provider can't stall the API process
+- Bounded timeouts, retry-with-backoff on all three LLM providers, thread-pool offloading so a slow provider can't stall the API process
 - Automatically degrades to deterministic-only mode if global rate limits are hit
+- The AI half of an analysis makes **at most 2 LLM calls total**, not up to ~14: one batched call explains every security finding together (previously one call *per finding*), and one combined call produces the checklist, suggested comments, executive summary, and Jira context together (previously four separate calls) — see `generate_review_bundle`/`explain_security_findings_batch` in `llm.py`. This is the main defense against exhausting a shared free-tier key's quota, not just a longer retry loop.
 
 ### Progressive Analysis (fast deterministic results, AI content streams in after)
 - `POST /analyze`: deterministic engines only — returns in well under a second, never touches an LLM
@@ -125,6 +127,7 @@ graph TD
         GH[GitHub REST API<br/>OAuth, PR data, issue comments, commit statuses]
         Gemini[Google Gemini API]
         OpenAI[OpenAI API]
+        Groq[Groq API<br/>OpenAI-compatible]
     end
 
     BS -->|chrome.scripting.executeScript| CS
@@ -144,6 +147,7 @@ graph TD
     API --> LLMSvc
     LLMSvc --> Gemini
     LLMSvc --> OpenAI
+    LLMSvc --> Groq
     API --> DB
     API -->|explicit build/refresh request| Indexer
     Indexer -->|fetch full tree, changed files| GH

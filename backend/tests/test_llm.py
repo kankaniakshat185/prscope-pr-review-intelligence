@@ -54,6 +54,23 @@ def test_gemini_retries_and_succeeds_after_transient_rate_limits():
     assert mock_sleep.call_count == 2  # backed off before attempt 2 and attempt 3
 
 
+def test_groq_uses_the_openai_compatible_chat_completions_shape():
+    with patch("requests.post", return_value=_success_response(
+        {"choices": [{"message": {"content": "hello from groq"}}]}
+    )) as mock_post:
+        result = generate_content("prompt", api_key="gsk_test", provider="groq")
+    assert result == "hello from groq"
+    assert mock_post.call_args[0][0] == "https://api.groq.com/openai/v1/chat/completions"
+    assert mock_post.call_args[1]["json"]["model"] == "llama-3.3-70b-versatile"
+
+
+def test_groq_rate_limit_message_is_provider_aware():
+    with patch("requests.post", return_value=_RateLimitedResponse()), \
+         patch("app.services.llm.time.sleep"):
+        msg = generate_executive_summary({"pr_type": "BACKEND"}, api_key="user-groq-key", provider="groq")
+    assert "Your Groq API Key Was Rate-Limited" in msg
+
+
 def test_openai_now_retries_instead_of_giving_up_immediately():
     # Before this fix, OpenAI had zero retry logic at all and returned the
     # rate-limit error on the very first 429. This is the regression test.
