@@ -51,7 +51,19 @@ def _post_with_retry(url: str, headers: dict, data: dict, provider_label: str):
     return _RATE_LIMITED if last_response is not None else None
 
 
-def generate_content(prompt: str, api_key: str = None, provider: str = "gemini") -> str:
+def generate_content(prompt: str, api_key: str = None, provider: str = "gemini", json_mode: bool = False) -> str:
+    """
+    json_mode=True forces each provider's own structured-output mode
+    instead of just hoping the model's free-text response happens to be
+    parseable JSON. This matters most for Groq: open-weight Llama models
+    are noticeably less reliable than GPT-4o/Gemini at spontaneously
+    returning clean JSON from instructions alone (real failure observed in
+    production - see _parse_error_fallback_summary). Callers that expect a
+    JSON *object* back (not an array - OpenAI/Groq's json_object mode
+    requires an object at the root) should pass json_mode=True; callers
+    that want free-text (e.g. the plain-markdown executive summary) must
+    leave it False.
+    """
     if provider == "openai":
         key_to_use = api_key or settings.OPENAI_API_KEY
         if not key_to_use:
@@ -66,6 +78,8 @@ def generate_content(prompt: str, api_key: str = None, provider: str = "gemini")
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1
         }
+        if json_mode:
+            data["response_format"] = {"type": "json_object"}
         response = _post_with_retry(url, headers, data, "OpenAI")
         if response is _RATE_LIMITED:
             return '{"error": "RATE_LIMIT_EXCEEDED"}'
@@ -95,6 +109,8 @@ def generate_content(prompt: str, api_key: str = None, provider: str = "gemini")
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1
         }
+        if json_mode:
+            data["response_format"] = {"type": "json_object"}
         response = _post_with_retry(url, headers, data, "Groq")
         if response is _RATE_LIMITED:
             return '{"error": "RATE_LIMIT_EXCEEDED"}'
@@ -111,9 +127,12 @@ def generate_content(prompt: str, api_key: str = None, provider: str = "gemini")
             return ""
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key_to_use}"
         headers = {'Content-Type': 'application/json'}
+        generation_config = {"temperature": 0.1}
+        if json_mode:
+            generation_config["response_mime_type"] = "application/json"
         data = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.1}
+            "generationConfig": generation_config
         }
         response = _post_with_retry(url, headers, data, "Gemini")
         if response is _RATE_LIMITED:
@@ -309,7 +328,7 @@ Must use EXACTLY these four headings using standard markdown ###: Purpose, Risk,
 Return ONLY the JSON object, no other text, no markdown code fences.
 """
 
-    res = generate_content(prompt, api_key, provider)
+    res = generate_content(prompt, api_key, provider, json_mode=True)
 
     default_jira = {"Ticket": ticket_id, "Confidence": 80, "Coverage": "N/A", "Missing_Requirements": "None detected"} if ticket_id else None
 
@@ -403,21 +422,22 @@ DO NOT detect vulnerabilities. Only EXPLAIN what was already found for each one.
 
 {chr(10).join(finding_blocks)}
 
-Return a JSON array with exactly {len(findings)} objects, in the SAME ORDER as the findings above (the first object explains Finding 1, the second explains Finding 2, and so on). Each object must have:
+Return a single JSON object with one top-level key, "explanations", whose value is a JSON array with exactly {len(findings)} objects, in the SAME ORDER as the findings above (the first object explains Finding 1, the second explains Finding 2, and so on). Each object must have:
 "explanation": "Clear explanation of the risk.",
 "recommendation": "How to fix it safely.",
 "impact_summary": "What happens if exploited."
 
-Return ONLY the JSON array, no other text, no markdown code fences.
+Return ONLY the JSON object, no other text, no markdown code fences.
 """
-    res = generate_content(prompt, api_key, provider)
+    res = generate_content(prompt, api_key, provider, json_mode=True)
     parsed = parse_json_response(res)
+    explanations = parsed.get("explanations") if isinstance(parsed, dict) else None
 
-    if not isinstance(parsed, list) or len(parsed) != len(findings):
+    if not isinstance(explanations, list) or len(explanations) != len(findings):
         return findings
 
     explained = []
-    for finding, explanation in zip(findings, parsed):
+    for finding, explanation in zip(findings, explanations):
         if isinstance(explanation, dict):
             explained.append({
                 **finding,

@@ -118,10 +118,10 @@ def test_batch_explains_all_findings_in_one_call_and_preserves_order():
         {"name": "Hardcoded secret", "severity": "High", "file": "a.py", "snippet": "API_KEY='x'", "reason": "r1", "recommendation": "rec1"},
         {"name": "SQL injection", "severity": "Critical", "file": "b.py", "snippet": "query % x", "reason": "r2", "recommendation": "rec2"},
     ]
-    explanations = [
+    explanations = {"explanations": [
         {"explanation": "exp1", "recommendation": "newrec1", "impact_summary": "impact1"},
         {"explanation": "exp2", "recommendation": "newrec2", "impact_summary": "impact2"},
-    ]
+    ]}
     with patch("requests.post", return_value=_gemini_text_response(json.dumps(explanations))) as mock_post:
         result = explain_security_findings_batch(findings, api_key="k", provider="gemini")
 
@@ -136,12 +136,20 @@ def test_batch_explains_all_findings_in_one_call_and_preserves_order():
 def test_batch_returns_findings_unchanged_on_length_mismatch():
     findings = [{"name": "A", "severity": "High", "file": "a.py", "snippet": "x", "reason": "r", "recommendation": "rec"}]
     # Model returns 2 explanations for 1 finding - untrustworthy, don't guess which maps to which.
-    mismatched = [{"explanation": "e1"}, {"explanation": "e2"}]
+    mismatched = {"explanations": [{"explanation": "e1"}, {"explanation": "e2"}]}
     with patch("requests.post", return_value=_gemini_text_response(json.dumps(mismatched))):
         result = explain_security_findings_batch(findings, api_key="k", provider="gemini")
 
     assert result == findings
     assert "ai_explanation" not in result[0]
+
+
+def test_batch_returns_findings_unchanged_when_explanations_key_is_missing():
+    findings = [{"name": "A", "severity": "High", "file": "a.py", "snippet": "x", "reason": "r", "recommendation": "rec"}]
+    # A valid JSON object, but not shaped as {"explanations": [...]}.
+    with patch("requests.post", return_value=_gemini_text_response(json.dumps({"foo": "bar"}))):
+        result = explain_security_findings_batch(findings, api_key="k", provider="gemini")
+    assert result == findings
 
 
 def test_batch_returns_findings_unchanged_when_response_is_not_json():

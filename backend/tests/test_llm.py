@@ -71,6 +71,34 @@ def test_groq_rate_limit_message_is_provider_aware():
     assert "Your Groq API Key Was Rate-Limited" in msg
 
 
+def test_json_mode_sets_response_format_for_groq_and_openai():
+    # Real bug: Groq's Llama model, asked only in prose to "return JSON",
+    # sometimes doesn't - json_mode forces each provider's own structured-
+    # output mode instead of relying on instruction-following alone.
+    for provider in ("groq", "openai"):
+        with patch("requests.post", return_value=_success_response(
+            {"choices": [{"message": {"content": "{}"}}]}
+        )) as mock_post:
+            generate_content("prompt", api_key="k", provider=provider, json_mode=True)
+        assert mock_post.call_args[1]["json"]["response_format"] == {"type": "json_object"}
+
+
+def test_json_mode_sets_response_mime_type_for_gemini():
+    with patch("requests.post", return_value=_success_response(
+        {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+    )) as mock_post:
+        generate_content("prompt", api_key="k", provider="gemini", json_mode=True)
+    assert mock_post.call_args[1]["json"]["generationConfig"]["response_mime_type"] == "application/json"
+
+
+def test_json_mode_defaults_to_off():
+    with patch("requests.post", return_value=_success_response(
+        {"choices": [{"message": {"content": "plain text"}}]}
+    )) as mock_post:
+        generate_content("prompt", api_key="k", provider="openai")
+    assert "response_format" not in mock_post.call_args[1]["json"]
+
+
 def test_openai_now_retries_instead_of_giving_up_immediately():
     # Before this fix, OpenAI had zero retry logic at all and returned the
     # rate-limit error on the very first 429. This is the regression test.

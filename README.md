@@ -80,6 +80,7 @@ Built for high-velocity engineering teams, PRScope significantly reduces the cog
 - Bounded timeouts, retry-with-backoff on all three LLM providers, thread-pool offloading so a slow provider can't stall the API process
 - Automatically degrades to deterministic-only mode if global rate limits are hit
 - The AI half of an analysis makes **at most 2 LLM calls total**, not up to ~14: one batched call explains every security finding together (previously one call *per finding*), and one combined call produces the checklist, suggested comments, executive summary, and Jira context together (previously four separate calls) — see `generate_review_bundle`/`explain_security_findings_batch` in `llm.py`. This is the main defense against exhausting a shared free-tier key's quota, not just a longer retry loop.
+- Calls that expect structured output pass `json_mode=True`, which forces each provider's own native JSON mode (`response_format: json_object` for OpenAI/Groq, `response_mime_type` for Gemini) rather than relying on prompt instructions alone. Found in production: Groq's Llama model is noticeably less reliable than GPT-4o/Gemini at spontaneously returning clean JSON without this — real users hit "AI Response Could Not Be Parsed" until this was added.
 
 ### Progressive Analysis (fast deterministic results, AI content streams in after)
 - `POST /analyze`: deterministic engines only — returns in well under a second, never touches an LLM

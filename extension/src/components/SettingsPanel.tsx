@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle } from "lucide-react";
+import { CheckCircle, AlertTriangle } from "lucide-react";
 import { textSecondary, selectChevronStyle } from "@/lib/styles";
 
 export function SettingsPanel({
@@ -51,9 +51,12 @@ export function SettingsPanel({
 
   return (
     <div className="mb-4 flex flex-col gap-3">
-      <p className={`text-[11px] ${textSecondary} px-1 -mb-1`}>
-        Keys below are stored locally in this browser (not encrypted, not sent anywhere except with your own analysis requests). Anyone with access to this device and browser profile could read them from local storage. Use a fine-grained, minimally-scoped GitHub token if possible.
-      </p>
+      <div className="flex gap-2 items-start px-1">
+        <AlertTriangle className="h-4 w-4 text-[var(--color-attention-fg,#d29922)] flex-shrink-0 mt-0.5" />
+        <p className="text-[11px] text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))] leading-relaxed break-words">
+          <strong>Security Notice:</strong> Keys below are stored locally in this browser (not encrypted, not sent anywhere except with your own analysis requests). Anyone with access to this device and browser profile could read them from local storage. Use a fine-grained, minimally-scoped GitHub token if possible.
+        </p>
+      </div>
       <div className="p-3 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--borderColor-default,var(--color-border-default,#30363d))] rounded-md text-sm shadow-sm transition-all hover:shadow-md">
         <label className="block text-xs font-semibold text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] mb-2">
           AI Provider
