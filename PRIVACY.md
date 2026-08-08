@@ -24,6 +24,6 @@ When you use the PRScope Chrome Extension, we handle the following data:
 Depending on which provider you configure, we send code diffs and PR context to Google's Gemini API or OpenAI's API to generate reviews, in accordance with each provider's respective API usage and data policies. If you have not configured your own key, requests may use a shared backend-managed key subject to the same third-party policies.
 
 ## 5. Contact
-Since PRScope is an open-source tool, you can inspect the code, open an issue, or contact the developer directly via our GitHub repository: https://github.com/kankaniakshat185/prscope
+Since PRScope is an open-source tool, you can inspect the code, open an issue, or contact the developer directly via our GitHub repository: https://github.com/kankaniakshat185/prscope-pr-review-intelligence
 
 For privacy-related inquiries, you can also contact us at kankaniakshat185@gmail.com.
