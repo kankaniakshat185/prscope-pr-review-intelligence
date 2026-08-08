@@ -14,7 +14,10 @@ app.add_middleware(
     allow_origins=allowed_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "Authorization"],
+    # X-Github-Token: the user's own PAT, sent on GET /workspace/reviews
+    # (team=true) and its detail/events routes to verify real repo access
+    # for team-shared review visibility (see verify_repo_access).
+    allow_headers=["Content-Type", "Authorization", "X-Github-Token"],
 )
 
 app.include_router(api_router, prefix="/api")

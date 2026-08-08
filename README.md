@@ -45,7 +45,8 @@ Built for high-velocity engineering teams, PRScope significantly reduces the cog
 
 ### Team-Shared Saved Reviews
 - "Team Reviews" toggle (Workspace tab) shows everyone's saved reviews for the currently-open repo, each attributed to its author
-- Access requires already having a review of your own in that repo — a deliberate simplification, not real GitHub-permission verification, and stated as such
+- Access is gated on a **live GitHub permission check** against a PAT the requesting user supplies (the same one used for posting comments/status), not on review history. A private repo grants access on any successful (non-404) fetch — GitHub itself 404s private repos for non-collaborators. A public repo specifically requires push/admin permission, since read access to a public repo is universal and proves nothing about real team membership
+- This replaced an earlier, weaker version of this gate ("have you saved a review in this repo before") that any PRScope user could trivially satisfy for any repo the shared backend's own token could see, regardless of their own GitHub access — caught before release, not after
 - Saving/editing stays per-user; nothing is merged or overwritten across teammates
 
 ### Team-Contributed Incidents
@@ -94,7 +95,8 @@ Built for high-velocity engineering teams, PRScope significantly reduces the cog
 - **Mock login is dev-only and off by default.** `ENABLE_MOCK_AUTH=true` unlocks a passwordless login path (`code=mock`) that skips GitHub OAuth entirely — never enable this on a deployed instance.
 - **CORS is allow-listed, not wildcard.** Only the origins in `ALLOWED_ORIGINS` (the published extension ID + any local dev origins you add) can call the API.
 - **Webhooks are signature-verified.** `GITHUB_WEBHOOK_SECRET` must be set and must match the secret configured on the GitHub webhook, or every event is rejected.
-- **BYOK keys are stored, not encrypted.** Gemini/OpenAI keys and your GitHub PAT live in the extension's local storage in plaintext. Use scoped, minimally-privileged tokens.
+- **BYOK keys are stored, not encrypted.** Gemini/OpenAI/Groq keys and your GitHub PAT live in the extension's local storage in plaintext. Use scoped, minimally-privileged tokens.
+- **Team-shared saved reviews require a verified GitHub permission check.** Viewing another user's saved review for a repository requires a live GitHub API check (via your own PAT) proving real access to that repo — not merely having used PRScope on it before. See Team-Shared Saved Reviews above.
 
 ## System Architecture
 
@@ -142,7 +144,7 @@ graph TD
     API --> Engines
     Engines -->|fetch PR diff, files & base/head content| GH
     Engines -.->|read: cross-file blast radius| DB
-    API -->|post comments & commit statuses, user-supplied PAT| GH
+    API -->|post comments/statuses & verify repo access, user-supplied PAT| GH
     Engines -->|read: similarity search| Chroma
     API -->|write: report a team incident| Chroma
     API --> LLMSvc

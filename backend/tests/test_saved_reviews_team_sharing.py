@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from app.models.pr import ReviewEvent, SavedReview, SessionLocal, User
@@ -93,28 +95,45 @@ def test_team_view_requires_repository_param(client, mock_token):
     assert r.status_code == 400
 
 
-def test_team_view_is_forbidden_without_a_prior_review_of_that_repo(client, mock_token):
+def test_team_view_is_forbidden_without_a_github_token_header(client, mock_token):
+    # No X-Github-Token header at all - can't verify access, so denied
+    # regardless of review history.
     r = client.get(
         "/api/analysis/workspace/reviews",
         headers={"Authorization": f"Bearer {mock_token}"},
-        params={"team": "true", "repository": "acme/never-reviewed-by-me"},
+        params={"team": "true", "repository": "acme/some-repo"},
     )
     assert r.status_code == 403
 
 
-def test_team_view_shows_everyones_reviews_with_author_username(client, two_users):
+def test_team_view_is_forbidden_when_the_token_fails_verification(client, mock_token):
+    # Has a token, but it doesn't prove real access to this repo (e.g. a
+    # public repo where the token's owner is just a random reader).
+    with patch("app.api.endpoints.verify_repo_access", new=AsyncMock(return_value=False)):
+        r = client.get(
+            "/api/analysis/workspace/reviews",
+            headers={"Authorization": f"Bearer {mock_token}", "X-Github-Token": "gh-pat-no-access"},
+            params={"team": "true", "repository": "acme/some-repo"},
+        )
+    assert r.status_code == 403
+
+
+def test_team_view_shows_everyones_reviews_with_author_username_when_access_verified(client, two_users):
     token_a, token_b, user_id_b = two_users
     repository = "acme/team-sharing-team-view"
     try:
         _save_review(client, token_a, repository, pr_number=1)
         _save_review(client, token_b, repository, pr_number=2)
 
-        r = client.get(
-            "/api/analysis/workspace/reviews",
-            headers={"Authorization": f"Bearer {token_a}"},
-            params={"team": "true", "repository": repository},
-        )
+        with patch("app.api.endpoints.verify_repo_access", new=AsyncMock(return_value=True)) as mock_verify:
+            r = client.get(
+                "/api/analysis/workspace/reviews",
+                headers={"Authorization": f"Bearer {token_a}", "X-Github-Token": "gh-pat-real-access"},
+                params={"team": "true", "repository": repository},
+            )
         assert r.status_code == 200
+        mock_verify.assert_called_once_with("acme", "team-sharing-team-view", "gh-pat-real-access")
+
         body = r.json()
         prs = {row["pr_number"]: row["author_username"] for row in body}
         assert prs[1] is not None  # token_a's own review, some username
@@ -123,41 +142,54 @@ def test_team_view_shows_everyones_reviews_with_author_username(client, two_user
         _cleanup(repositories=[repository])
 
 
-def test_review_detail_visible_to_teammate_who_has_reviewed_same_repo(client, two_users):
+def test_review_detail_visible_with_a_verified_token_even_for_someone_elses_review(client, two_users):
     token_a, token_b, _ = two_users
     repository = "acme/team-sharing-detail-visible"
     try:
-        _save_review(client, token_a, repository, pr_number=1)
         review_b = _save_review(client, token_b, repository, pr_number=2)
 
-        # token_a can see token_b's review because token_a has also reviewed this repo
-        r = client.get(
-            f"/api/analysis/workspace/reviews/{review_b['id']}",
-            headers={"Authorization": f"Bearer {token_a}"},
-        )
-        assert r.status_code == 200
-        assert r.json()["pr_number"] == 2
+        with patch("app.api.endpoints.verify_repo_access", new=AsyncMock(return_value=True)):
+            r = client.get(
+                f"/api/analysis/workspace/reviews/{review_b['id']}",
+                headers={"Authorization": f"Bearer {token_a}", "X-Github-Token": "gh-pat-real-access"},
+            )
+            assert r.status_code == 200
+            assert r.json()["pr_number"] == 2
 
-        r_events = client.get(
-            f"/api/analysis/workspace/reviews/{review_b['id']}/events",
-            headers={"Authorization": f"Bearer {token_a}"},
-        )
-        assert r_events.status_code == 200
+            r_events = client.get(
+                f"/api/analysis/workspace/reviews/{review_b['id']}/events",
+                headers={"Authorization": f"Bearer {token_a}", "X-Github-Token": "gh-pat-real-access"},
+            )
+            assert r_events.status_code == 200
     finally:
         _cleanup(repositories=[repository])
 
 
-def test_review_detail_hidden_from_a_user_with_no_reviews_in_that_repo(client, two_users):
+def test_review_detail_hidden_without_a_verified_token(client, two_users):
     token_a, token_b, _ = two_users
     repository = "acme/team-sharing-detail-hidden"
     try:
         review_b = _save_review(client, token_b, repository, pr_number=1)
 
-        # token_a has never reviewed anything in this repo - can't see it
+        # No X-Github-Token header - token_a has never proven access to this repo.
         r = client.get(
             f"/api/analysis/workspace/reviews/{review_b['id']}",
             headers={"Authorization": f"Bearer {token_a}"},
         )
         assert r.status_code == 404
+    finally:
+        _cleanup(repositories=[repository])
+
+
+def test_review_detail_always_visible_for_your_own_review_without_any_token(client, mock_token):
+    repository = "acme/team-sharing-own-review-no-token"
+    try:
+        review = _save_review(client, mock_token, repository, pr_number=1)
+
+        r = client.get(
+            f"/api/analysis/workspace/reviews/{review['id']}",
+            headers={"Authorization": f"Bearer {mock_token}"},
+        )
+        assert r.status_code == 200
     finally:
         _cleanup(repositories=[repository])

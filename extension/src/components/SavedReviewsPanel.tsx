@@ -54,15 +54,25 @@ export function SavedReviewsPanel({
           q.set("team", "true");
           q.set("repository", currentRepository);
         }
-        const response = await fetch(`${apiBase}/api/analysis/workspace/reviews?${q.toString()}`, {
-          headers: { "Authorization": `Bearer ${token}` }
-        });
+        const headers: Record<string, string> = { "Authorization": `Bearer ${token}` };
+        // Team Reviews is gated on a live GitHub permission check, not on
+        // review history - it needs the user's own PAT to verify they
+        // actually have access to this repo (same PAT already used for
+        // posting comments/status, from Settings).
+        const githubToken = localStorage.getItem("prscope_github_token");
+        if (teamView && githubToken) headers["X-Github-Token"] = githubToken;
+
+        const response = await fetch(`${apiBase}/api/analysis/workspace/reviews?${q.toString()}`, { headers });
         if (response.ok) {
           const result = await response.json();
           setSavedReviews(result);
         } else if (response.status === 403 && teamView) {
           setSavedReviews([]);
-          setTeamViewError("You don't have any reviews for this repository yet — save one first to unlock the team view.");
+          setTeamViewError(
+            githubToken
+              ? "Your GitHub Personal Access Token doesn't show verified access to this repository (a public repo needs write/collaborator access, not just read access)."
+              : "Team Reviews requires a GitHub Personal Access Token to verify you have access to this repository. Add one in Settings."
+          );
         }
       } catch (err) {
         console.error(err);
@@ -74,12 +84,12 @@ export function SavedReviewsPanel({
 
   const fetchReviewDetails = async (id: number) => {
     try {
-      const response = await fetch(`${apiBase}/api/analysis/workspace/reviews/${id}`, {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      const eventsRes = await fetch(`${apiBase}/api/analysis/workspace/reviews/${id}/events`, {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
+      const headers: Record<string, string> = { "Authorization": `Bearer ${token}` };
+      const githubToken = localStorage.getItem("prscope_github_token");
+      if (githubToken) headers["X-Github-Token"] = githubToken;
+
+      const response = await fetch(`${apiBase}/api/analysis/workspace/reviews/${id}`, { headers });
+      const eventsRes = await fetch(`${apiBase}/api/analysis/workspace/reviews/${id}/events`, { headers });
 
       if (response.ok && eventsRes.ok) {
         setSelectedReview(await response.json());

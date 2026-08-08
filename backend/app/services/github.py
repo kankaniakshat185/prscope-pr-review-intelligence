@@ -204,3 +204,45 @@ async def fetch_compare(owner: str, repo: str, base_sha: str, head_sha: str) -> 
         )
         response.raise_for_status()
         return response.json().get("files", [])
+
+
+async def verify_repo_access(owner: str, repo: str, github_token: str) -> bool:
+    """
+    True only if `github_token` proves its owner has *meaningful* access to
+    this repo - not just "the repo happens to be public," which is true for
+    literally any valid token regardless of who holds it. Used to gate
+    team-shared saved reviews on real repo membership instead of "have you
+    ever pointed the extension at this repo before" (which any PRScope user
+    could trivially satisfy for any repo the shared backend token can see).
+
+    - Private repos: any successful (non-404) fetch already proves
+      collaborator access - GitHub 404s a private repo for anyone who isn't
+      a collaborator on it, by design (to avoid confirming it exists).
+    - Public repos: requires push/admin permission specifically. Read access
+      to a public repo is universal and proves nothing about real team
+      membership; write access is a much harder to fake signal that this
+      identity is an actual contributor, not just a visitor.
+    """
+    if not github_token:
+        return False
+
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"Bearer {github_token}",
+        "User-Agent": "PRScope",
+    }
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(f"https://api.github.com/repos/{owner}/{repo}", headers=headers)
+        except httpx.HTTPError:
+            return False
+
+    if response.status_code != 200:
+        return False
+
+    data = response.json()
+    if data.get("private"):
+        return True
+
+    permissions = data.get("permissions") or {}
+    return bool(permissions.get("push") or permissions.get("admin"))

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Security
+from fastapi import APIRouter, HTTPException, Depends, Security, Header
 from fastapi.concurrency import run_in_threadpool
 from typing import Dict, Any, Optional
 from sqlalchemy import String
@@ -10,7 +10,7 @@ from app.schemas.pr import (
     IncidentCreate, IncidentResponse,
     SavedReviewCreate, SavedReviewResponse, ReviewEventResponse
 )
-from app.services.github import fetch_pr_data, fetch_architecture_rules, fetch_pr_head_sha
+from app.services.github import fetch_pr_data, fetch_architecture_rules, fetch_pr_head_sha, verify_repo_access
 from app.services.github_status import post_commit_status
 from app.services.risk_engine import calculate_risk
 from app.services.context_builder import build_pr_context
@@ -442,10 +442,21 @@ def get_team_incidents(repository: str, user_id: int = Depends(verify_token)):
 # SAVED REVIEWS WORKSPACE
 # ==================================================
 
-def _user_has_reviewed_repo(db: Session, user_id: int, repository: str) -> bool:
-    return db.query(SavedReview).filter(
-        SavedReview.user_id == user_id, SavedReview.repository == repository
-    ).first() is not None
+async def _has_team_access(repository: str, github_token: Optional[str]) -> bool:
+    """
+    Gate for team-shared review visibility: does this specific GitHub
+    token's owner have real, verifiable access to this repository right
+    now? Deliberately NOT "have they saved a review here before" - that
+    was trivially satisfiable by any PRScope user for any repo the shared
+    backend's own token could see, since /analyze never checked the
+    caller's own GitHub identity against the repo at all.
+    """
+    if not github_token:
+        return False
+    if "/" not in repository:
+        return False
+    owner, repo = repository.split("/", 1)
+    return await verify_repo_access(owner, repo, github_token)
 
 
 @router.post("/workspace/reviews", response_model=SavedReviewResponse)
@@ -492,7 +503,7 @@ def save_review(review: SavedReviewCreate, user_id: int = Depends(verify_token),
     return saved_review
 
 @router.get("/workspace/reviews")
-def get_saved_reviews(
+async def get_saved_reviews(
     user_id: int = Depends(verify_token),
     db: Session = Depends(get_db),
     status: str = None,
@@ -500,19 +511,24 @@ def get_saved_reviews(
     search: str = None,
     repository: str = None,
     team: bool = False,
+    x_github_token: Optional[str] = Header(None),
 ):
     """
     team=true switches from "my reviews" to "everyone's reviews for this
-    repository" - there's no separate team/org membership model, so access
-    is gated on the requester already having at least one review of their
-    own there (proof they've successfully analyzed it through PRScope
-    before) rather than on a real team-membership check.
+    repository". Gated on a live GitHub permission check (see
+    _has_team_access / verify_repo_access), using a GitHub PAT supplied via
+    the X-GitHub-Token header - not on "have I saved a review here before",
+    which any PRScope user could trivially satisfy for any repo the shared
+    backend's own token can see, regardless of their own GitHub access.
     """
     if team:
         if not repository:
             raise HTTPException(status_code=400, detail="repository is required when team=true")
-        if not _user_has_reviewed_repo(db, user_id, repository):
-            raise HTTPException(status_code=403, detail="You don't have any reviews for this repository yet.")
+        if not await _has_team_access(repository, x_github_token):
+            raise HTTPException(
+                status_code=403,
+                detail="Team Reviews requires a GitHub Personal Access Token with access to this repository. Add one in Settings.",
+            )
         query = db.query(SavedReview).filter(SavedReview.repository == repository)
     else:
         query = db.query(SavedReview).filter(SavedReview.user_id == user_id)
@@ -562,16 +578,26 @@ def get_saved_reviews(
     return reviews
 
 @router.get("/workspace/reviews/{review_id}", response_model=SavedReviewResponse)
-def get_review_detail(review_id: int, user_id: int = Depends(verify_token), db: Session = Depends(get_db)):
+async def get_review_detail(
+    review_id: int,
+    user_id: int = Depends(verify_token),
+    db: Session = Depends(get_db),
+    x_github_token: Optional[str] = Header(None),
+):
     review = db.query(SavedReview).filter(SavedReview.id == review_id).first()
-    if not review or (review.user_id != user_id and not _user_has_reviewed_repo(db, user_id, review.repository)):
+    if not review or (review.user_id != user_id and not await _has_team_access(review.repository, x_github_token)):
         raise HTTPException(status_code=404, detail="Review not found")
     return review
 
 @router.get("/workspace/reviews/{review_id}/events", response_model=list[ReviewEventResponse])
-def get_review_events(review_id: int, user_id: int = Depends(verify_token), db: Session = Depends(get_db)):
+async def get_review_events(
+    review_id: int,
+    user_id: int = Depends(verify_token),
+    db: Session = Depends(get_db),
+    x_github_token: Optional[str] = Header(None),
+):
     review = db.query(SavedReview).filter(SavedReview.id == review_id).first()
-    if not review or (review.user_id != user_id and not _user_has_reviewed_repo(db, user_id, review.repository)):
+    if not review or (review.user_id != user_id and not await _has_team_access(review.repository, x_github_token)):
         raise HTTPException(status_code=404, detail="Review not found")
 
     events = db.query(ReviewEvent).filter(ReviewEvent.review_id == review_id).order_by(ReviewEvent.timestamp.desc()).all()
