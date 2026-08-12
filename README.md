@@ -1,4 +1,5 @@
 # PRScope - PR Review Intelligence
+[![CI](https://github.com/kankaniakshat185/prscope-pr-review-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/kankaniakshat185/prscope-pr-review-intelligence/actions/workflows/ci.yml)
 
 [Install PRScope from the Chrome Web Store](https://chromewebstore.google.com/detail/prscope/jfngcklfbiljgpoeehlkpkackahgopoc)
 
