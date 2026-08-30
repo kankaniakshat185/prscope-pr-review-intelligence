@@ -42,6 +42,22 @@ def _success_response(json_body):
     return resp
 
 
+def test_gemini_uses_a_current_non_retired_model():
+    # Regression coverage: gemini-2.0-flash was retired by Google (started
+    # returning 404 "no longer available" on every request, not just
+    # rate-limited ones - a real production incident, not a hypothetical).
+    # Pinning the expected model name here means a future copy-paste of an
+    # old snippet, or reverting this line by accident, fails a test instead
+    # of silently breaking every shared-pool Gemini request again.
+    with patch("requests.post", return_value=_success_response(
+        {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
+    )) as mock_post:
+        generate_content("prompt", api_key="k", provider="gemini")
+    called_url = mock_post.call_args[0][0]
+    assert "gemini-2.0-flash" not in called_url
+    assert "models/gemini-3.6-flash:generateContent" in called_url
+
+
 def test_gemini_retries_and_succeeds_after_transient_rate_limits():
     responses = [_RateLimitedResponse(), _RateLimitedResponse(), _success_response(
         {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}

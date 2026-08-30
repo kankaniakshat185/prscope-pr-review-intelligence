@@ -125,7 +125,10 @@ def generate_content(prompt: str, api_key: str = None, provider: str = "gemini",
         key_to_use = api_key or settings.GEMINI_API_KEY
         if not key_to_use:
             return ""
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={key_to_use}"
+        # gemini-2.0-flash was retired by Google (returns 404 "no longer
+        # available" as of August 2026) - gemini-3.6-flash is its
+        # replacement per Google's own deprecation error message.
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={key_to_use}"
         headers = {'Content-Type': 'application/json'}
         generation_config = {"temperature": 0.1}
         if json_mode:

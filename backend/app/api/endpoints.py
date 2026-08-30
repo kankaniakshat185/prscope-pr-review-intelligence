@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Security, Header
 from fastapi.concurrency import run_in_threadpool
 from typing import Dict, Any, Optional
 from sqlalchemy import String
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.models.pr import SessionLocal, User, SavedReview, ReviewEvent, RepoIndex
 from app.schemas.pr import (
@@ -116,20 +117,44 @@ async def github_callback(code: str, db: Session = Depends(get_db)):
             avatar_url = user_data.get("avatar_url")
 
     # 3. Create or update user
+    # This is a check-then-insert, not an atomic upsert, and github_id has a
+    # unique constraint (models/pr.py). If this callback fires twice in
+    # close succession for the same brand-new GitHub identity - a browser
+    # network retry, or the OAuth popup and a parent-window redirect both
+    # landing - both requests can find "no existing user" and both attempt
+    # to insert, and the second commit raises IntegrityError. This can only
+    # happen on a user's very first login ever: once the row exists, every
+    # later callback takes the update branch below, which never inserts and
+    # can't hit this constraint - matching the exact "fails once, then
+    # works on retry" symptom this was written to fix.
     user = db.query(User).filter(User.github_id == github_id).first()
     if not user:
         user = User(
             github_id=github_id,
             username=username,
             avatar_url=avatar_url,
-            email=username + "@github.com"
+            email=(username or github_id) + "@github.com"
         )
         db.add(user)
+        try:
+            db.commit()
+        except IntegrityError:
+            # Lost the race - a concurrent callback already inserted this
+            # github_id. Recover by picking up that row instead of failing.
+            db.rollback()
+            user = db.query(User).filter(User.github_id == github_id).first()
+            if not user:
+                # The constraint fired but no row is visible even after
+                # rollback - genuinely unexpected. Fail with a clean,
+                # actionable response instead of an unhandled 500.
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to create your user account. Please try logging in again.",
+                )
     else:
         user.username = username
         user.avatar_url = avatar_url
-    
-    db.commit()
+        db.commit()
     db.refresh(user)
 
     # 4. Generate our backend JWT
