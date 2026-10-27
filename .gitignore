@@ -2,6 +2,7 @@
 .DS_Store
 *.swp
 *.swo
+docs/STUDY_PLAN.md
 
 # Environment Variables
 .env

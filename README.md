@@ -29,62 +29,41 @@ The platform follows a decoupled client-server model: the Chrome Extension stays
 ```mermaid
 graph TD
     subgraph Client [Chrome Extension]
-        CS[Content Script<br/>injects iframe on github.com/*/pull/*]
-        BS[Background Worker<br/>on-demand injection]
-        UI[Next.js React UI<br/>runs inside the iframe]
-        Storage[(localStorage<br/>JWT session, BYOK keys, GitHub PAT)]
+        CS[Content Script<br/>injects iframe on PR pages]
+        UI[Next.js UI<br/>runs inside the iframe]
     end
 
     subgraph Backend [FastAPI Backend]
-        CORS{CORS gate<br/>allow-listed origins only}
-        Auth[Auth: GitHub OAuth + JWT<br/>mock login gated, dev-only]
-        API[Analysis API<br/>requires bearer token · split: fast /analyze + slower /analyze/enrich]
-        Engines[Deterministic Engines<br/>risk · reviewability · security ·<br/>architecture · dependency graph · symbols]
-        Indexer[Repo Index Engine<br/>full + incremental, background task]
-        LLMSvc[LLM Service<br/>thread-pool offloaded, timeout-bounded]
-        Webhook[Webhook Receiver<br/>HMAC-SHA256 verified · debounced auto-analysis]
+        API[Analysis API<br/>JWT-authed · fast /analyze + slower /analyze/enrich]
+        Engines[Deterministic Engines<br/>risk · security · architecture · dependency graph]
+        LLMSvc[LLM Service]
+        Webhook[Webhook Receiver<br/>HMAC-verified]
     end
 
     subgraph Data [Persistence]
-        DB[(SQLite or PostgreSQL<br/>users, saved reviews, repo-wide function/call index)]
-        Chroma[(ChromaDB<br/>15 real sourced incidents + team-contributed)]
+        DB[(Postgres / SQLite)]
+        Chroma[(ChromaDB<br/>incident corpus)]
     end
 
     subgraph External [External Services]
-        GH[GitHub REST API<br/>OAuth, PR data, issue comments, commit statuses]
-        Gemini[Google Gemini API]
-        OpenAI[OpenAI API]
-        Groq[Groq API<br/>OpenAI-compatible]
+        GH[GitHub REST API]
+        LLM[Gemini · OpenAI · Groq]
     end
 
-    BS -->|chrome.scripting.executeScript| CS
-    CS <-->|postMessage, origin-checked both ways| UI
-    UI -->|fetch, Bearer JWT| CORS --> API
-    Storage -.->|session + BYOK keys| UI
-
-    API --> Auth
-    Auth -->|OAuth code exchange| GH
-    Auth --> DB
+    CS <-->|postMessage| UI
+    UI -->|Bearer JWT| API
     API --> Engines
-    Engines -->|fetch PR diff, files & base/head content| GH
-    Engines -.->|read: cross-file blast radius| DB
-    API -->|post comments/statuses & verify repo access, user-supplied PAT| GH
-    Engines -->|read: similarity search| Chroma
-    API -->|write: report a team incident| Chroma
     API --> LLMSvc
-    LLMSvc --> Gemini
-    LLMSvc --> OpenAI
-    LLMSvc --> Groq
     API --> DB
-    API -->|explicit build/refresh request| Indexer
-    Indexer -->|fetch full tree, changed files| GH
-    Indexer -->|write: functions & call edges| DB
-
+    Engines -->|PR diff & file content| GH
+    Engines -->|similarity search| Chroma
+    LLMSvc --> LLM
+    API -->|comments & commit statuses| GH
     GH -->|pull_request events| Webhook
-    Webhook -->|debounced| Engines
-    Webhook -.->|refresh if already indexed| Indexer
-    Webhook -->|risk verdict as commit status| GH
+    Webhook -->|debounced re-analysis| Engines
 ```
+
+*Not pictured: OAuth/JWT auth, the opt-in repo-wide function index, and live GitHub-permission checks for team review access — covered below.*
 
 ## Security Model
 
