@@ -19,9 +19,11 @@ Known, deliberate simplifications:
 - Nested function/lambda definitions are not descended into when computing
   the complexity of the enclosing function - each def is analyzed on its
   own when the walker reaches it separately.
-- Same limitation as the rest of this codebase's diff-based analysis: this
-  operates on a source string reconstructed from a diff patch, which is not
-  always syntactically complete on its own.
+- Computed from the real file content fetched via the Contents API
+  (`head_content`) when available. Only falls back to a source string
+  reconstructed from a diff patch - the same diff-fragment fragility as the
+  rest of this codebase's diff-based analysis - when real content wasn't
+  fetched for that file (see MAX_FILES_FOR_CONTENT_FETCH in github.py).
 """
 
 import ast
@@ -175,24 +177,12 @@ def function_complexity(func_node) -> int:
     return cfg.complexity()
 
 
-def compute_function_complexities(patch: str) -> Dict[str, int]:
+def compute_function_complexities_from_source(source: str) -> Dict[str, int]:
     """
-    Reconstructs a Python file's added+context lines from a diff patch and
-    computes cyclomatic complexity for every top-level function/method fully
-    visible in that reconstruction. Returns {} if the fragment doesn't parse
-    - same diff-fragment fragility as the rest of this codebase's AST-based
-    analysis (architecture.py, dependency_engine.py).
+    Computes cyclomatic complexity for every function/method defined in a
+    real, complete Python source string (typically a file's `head_content`).
+    Returns {} if the source doesn't parse.
     """
-    lines = []
-    for line in patch.split("\n"):
-        if line.startswith("+") and not line.startswith("+++"):
-            lines.append(line[1:])
-        elif line.startswith(" "):
-            lines.append(line[1:])
-    source = "\n".join(lines)
-    if not source.strip():
-        return {}
-
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -206,3 +196,25 @@ def compute_function_complexities(patch: str) -> Dict[str, int]:
             except Exception:
                 continue  # a malformed/unusual construct shouldn't take down the whole analysis
     return results
+
+
+def compute_function_complexities(patch: str) -> Dict[str, int]:
+    """
+    Fallback used only when a file's real content wasn't fetched: reconstructs
+    a Python file's added+context lines from a diff patch and computes
+    cyclomatic complexity for every top-level function/method fully visible
+    in that reconstruction. Returns {} if the fragment doesn't parse - same
+    diff-fragment fragility as the rest of this codebase's AST-based analysis
+    (architecture.py, dependency_engine.py).
+    """
+    lines = []
+    for line in patch.split("\n"):
+        if line.startswith("+") and not line.startswith("+++"):
+            lines.append(line[1:])
+        elif line.startswith(" "):
+            lines.append(line[1:])
+    source = "\n".join(lines)
+    if not source.strip():
+        return {}
+
+    return compute_function_complexities_from_source(source)

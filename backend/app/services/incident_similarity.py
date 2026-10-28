@@ -16,19 +16,26 @@ def get_chroma_client():
 # doesn't keep matching against them forever alongside the real ones.
 _OLD_STUB_IDS = ["INC-001", "INC-002", "INC-003"]
 
+# Sentinel "repository" tag for the seeded reference incidents - they're not
+# scoped to any one repo, unlike team-reported ones (see add_team_incident),
+# so find_similar_incidents() treats this value as "visible from every repo"
+# alongside the querying PR's own repository.
+GLOBAL_REPOSITORY_TAG = "__global__"
+
 
 def seed_reference_incidents():
     """
     Seeds the real, sourced incidents from app/data/real_incidents.py so
     find_similar_incidents() has real-world data to match against, not just
     whatever a team has gotten around to reporting themselves. Idempotent
-    and additive by incident_id (not a blunt "only if the collection is
-    totally empty" check) - re-running this after a team has already added
-    their own incidents (see add_team_incident) still fills in any
-    reference incidents that are missing, without duplicating ones already
-    present. Called from main.py's startup event, not at import time, so
-    importing this module never has side effects (creating a Chroma
-    client, writing to disk) on its own.
+    via upsert (not a blunt "only if the collection is totally empty"
+    check, and not add-only-if-missing either) - re-running this always
+    brings every reference incident's metadata (including the global
+    repository tag below) up to date, even for one seeded by an older
+    version of this function on an already-running instance. Called from
+    main.py's startup event, not at import time, so importing this module
+    never has side effects (creating a Chroma client, writing to disk) on
+    its own.
     """
     client = get_chroma_client()
     collection = client.get_or_create_collection(name="incidents")
@@ -37,24 +44,20 @@ def seed_reference_incidents():
     if stale and stale.get("ids"):
         collection.delete(ids=stale["ids"])
 
-    all_ids = [inc["incident_id"] for inc in REAL_INCIDENTS]
-    existing = set(collection.get(ids=all_ids).get("ids") or [])
-    missing = [inc for inc in REAL_INCIDENTS if inc["incident_id"] not in existing]
-
-    if missing:
-        collection.add(
-            documents=[inc["description"] for inc in missing],
-            metadatas=[
-                {
-                    "incident_id": inc["incident_id"],
-                    "date": inc["date"],
-                    "severity": inc["severity"],
-                    "source": inc["source"],
-                }
-                for inc in missing
-            ],
-            ids=[inc["incident_id"] for inc in missing],
-        )
+    collection.upsert(
+        documents=[inc["description"] for inc in REAL_INCIDENTS],
+        metadatas=[
+            {
+                "incident_id": inc["incident_id"],
+                "date": inc["date"],
+                "severity": inc["severity"],
+                "source": inc["source"],
+                "repository": GLOBAL_REPOSITORY_TAG,
+            }
+            for inc in REAL_INCIDENTS
+        ],
+        ids=[inc["incident_id"] for inc in REAL_INCIDENTS],
+    )
 
 def add_team_incident(repository: str, description: str, severity: str, reported_by: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -132,7 +135,9 @@ def _distance_to_score(distance: float) -> int:
 MIN_DISPLAY_SCORE = 35
 
 
-def query_incidents(collection, query_text: str, n_results: int = 3) -> List[Dict[str, Any]]:
+def query_incidents(
+    collection, query_text: str, n_results: int = 3, repository: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """
     The actual retrieval step, factored out of find_similar_incidents so
     retrieval_eval.py can run it against an isolated, disposable collection
@@ -140,8 +145,19 @@ def query_incidents(collection, query_text: str, n_results: int = 3) -> List[Dic
     back ranked (incident_id, score, doc, meta) results rather than the
     already-thresholded/formatted response shape find_similar_incidents
     returns.
+
+    `repository`, when given, restricts matches to the global reference
+    incidents (GLOBAL_REPOSITORY_TAG) plus team incidents reported against
+    that specific repo - otherwise a team-reported incident from one repo
+    could surface as a "similar incident" on an unrelated repo's PR, which
+    is both noise and a quiet cross-repo information leak. retrieval_eval.py
+    passes None, since its evaluation corpus has no repository metadata at
+    all.
     """
-    results = collection.query(query_texts=[query_text], n_results=n_results)
+    where = None
+    if repository:
+        where = {"$or": [{"repository": GLOBAL_REPOSITORY_TAG}, {"repository": repository}]}
+    results = collection.query(query_texts=[query_text], n_results=n_results, where=where)
 
     matches = []
     if results["documents"] and results["documents"][0]:
@@ -165,7 +181,9 @@ def find_similar_incidents(pr_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not query_text.strip():
         query_text = "code changes"
 
-    matches = query_incidents(collection, query_text, n_results=3)
+    owner, repo = pr_data.get("owner"), pr_data.get("repo")
+    repository = f"{owner}/{repo}" if owner and repo else None
+    matches = query_incidents(collection, query_text, n_results=3, repository=repository)
 
     incidents = []
     for match in matches:

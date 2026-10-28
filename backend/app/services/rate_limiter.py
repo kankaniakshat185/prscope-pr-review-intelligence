@@ -61,3 +61,20 @@ def rate_limited_user(user_id: int = Depends(verify_token)) -> int:
     the per-user rate limit before the route body runs."""
     analyze_rate_limiter.check(user_id)
     return user_id
+
+
+# A separate budget from analyze_rate_limiter: /index/build uses the
+# server's own GITHUB_TOKEN (not a per-user one) to walk an entire repo
+# tree, so an unlimited, unauthenticated-by-repo-ownership user could
+# otherwise trigger arbitrarily many full-repo scans back to back. 5 per
+# 5 minutes is generous for legitimate use (building/refreshing an index
+# for the handful of repos someone is actually reviewing) while bounding
+# repeated triggering - the in-process `_index_builds_in_progress` guard in
+# endpoints.py already prevents concurrent duplicate builds of the *same*
+# repo, which this is complementary to, not a replacement for.
+index_build_rate_limiter = RateLimiter(max_requests=5, window_seconds=300)
+
+
+def rate_limited_index_build_user(user_id: int = Depends(verify_token)) -> int:
+    index_build_rate_limiter.check(user_id)
+    return user_id

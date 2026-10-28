@@ -9,9 +9,11 @@ from typing import Any, Dict, List, Optional
 
 # Regex rules remain the detection path for non-Python files (JS/TS, etc.)
 # and as a fallback when a Python diff fragment doesn't parse cleanly enough
-# for bandit to run against it. For .py files, bandit (see below) replaces
-# these entirely - it's a mature, actively-maintained security linter with
-# far fewer false positives than hand-rolled single-line regex.
+# for bandit to run against it. For .py files, these run alongside bandit
+# (see below) rather than being replaced by it - bandit is broader overall
+# but not a strict superset of these rules (see analyze_security's
+# docstring for specifics), so dropping them would silently regress some
+# detections bandit alone doesn't cover.
 REGEX_RULES = [
     # Hardcoded Credentials
     (re.compile(r'(?i)(password|passwd|pwd)\s*=\s*["\'][^"\']+["\']'), "Hardcoded Credentials", "High", "Password assigned directly in code."),

@@ -70,6 +70,8 @@ def test_find_similar_incidents_matches_a_team_reported_incident(cleanup_inciden
     cleanup_incidents.append(incident["incident_id"])
 
     pr_data = {
+        "owner": "test-org",
+        "repo": "repo-incidents-match",
         "title": "Fix checkout crash",
         "description": "Handles empty cart edge case in checkout service to avoid null pointer exception",
     }
@@ -78,3 +80,25 @@ def test_find_similar_incidents_matches_a_team_reported_incident(cleanup_inciden
     matched = [r for r in results if incident["incident_id"] in r["explanation"]]
     assert len(matched) == 1
     assert "team-reported by bob" in matched[0]["explanation"]
+
+
+def test_find_similar_incidents_does_not_leak_a_team_incident_to_another_repo(cleanup_incidents):
+    repository = "test-org/repo-incidents-private"
+    incident = add_team_incident(
+        repository,
+        "Null pointer exception in the checkout service caused by an unhandled empty cart edge case during Black Friday traffic",
+        "Critical",
+        reported_by="bob",
+    )
+    cleanup_incidents.append(incident["incident_id"])
+
+    pr_data = {
+        "owner": "someone-else",
+        "repo": "unrelated-repo",
+        "title": "Fix checkout crash",
+        "description": "Handles empty cart edge case in checkout service to avoid null pointer exception",
+    }
+    results = find_similar_incidents(pr_data)
+
+    matched = [r for r in results if incident["incident_id"] in r["explanation"]]
+    assert matched == []

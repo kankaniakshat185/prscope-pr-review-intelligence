@@ -106,6 +106,7 @@ export interface PRDeterministicData {
   reviewability: Reviewability | null;
   pr_title: string | null;
   has_tests: boolean;
+  files_truncated: boolean;
 }
 
 // Matches backend PREnrichmentResponse: returned by POST /analyze/enrich,

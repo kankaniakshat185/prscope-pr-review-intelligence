@@ -71,7 +71,7 @@ function RepoIndexStatus({
 }
 
 function getReviewDecision(data: PRAnalysisData): ReviewDecision {
-  const { risk_score, security_findings, architecture_violations, pr_type, has_tests } = data;
+  const { risk_score, security_findings, architecture_violations } = data;
   const hasSec = security_findings && security_findings.length > 0;
   const hasArch = architecture_violations && architecture_violations.length > 0;
   const score = risk_score?.score || 0;
@@ -94,13 +94,10 @@ function getReviewDecision(data: PRAnalysisData): ReviewDecision {
   if (hasArch) {
     return { status: "REQUEST CHANGES", reason: "Architecture violations detected. Resolving architectural constraints is required.", color: "text-[var(--color-danger-fg,#da3633)]", bg: "bg-[var(--color-danger-fg,#da3633)]" };
   }
-  if (score >= 7 && !has_tests && pr_type !== "DOCS" && pr_type !== "TEST") {
-    return { status: "REQUEST CHANGES", reason: "High risk change with no test coverage updates. Tests are required.", color: "text-[var(--color-danger-fg,#da3633)]", bg: "bg-[var(--color-danger-fg,#da3633)]" };
-  }
   if (score >= 4 && score <= 6) {
     return { status: "NEEDS REVIEW", reason: `Moderate risk score (${score}/10). Manual verification recommended.`, color: "text-[var(--color-attention-fg,#d29922)]", bg: "bg-[var(--color-attention-fg,#d29922)]" };
   }
-  if ((score >= 4 || score <= 6) && highDep) {
+  if (highDep) {
     return { status: "NEEDS REVIEW", reason: "Moderate dependency impact detected. Core components were modified. Manual verification is recommended.", color: "text-[var(--color-attention-fg,#d29922)]", bg: "bg-[var(--color-attention-fg,#d29922)]" };
   }
   if (score <= 3 && !hasSec && !hasArch) {
@@ -161,9 +158,12 @@ export function PrReviewPanel({
     if (!token) return;
     const fetchTeamIncidents = async () => {
       try {
+        const headers: Record<string, string> = { "Authorization": `Bearer ${token}` };
+        const githubToken = localStorage.getItem("prscope_github_token");
+        if (githubToken) headers["X-Github-Token"] = githubToken;
         const response = await fetch(
           `${apiBase}/api/analysis/incidents?repository=${encodeURIComponent(`${owner}/${repo}`)}`,
-          { headers: { "Authorization": `Bearer ${token}` } }
+          { headers }
         );
         if (response.ok) {
           setTeamIncidents(await response.json());
@@ -447,6 +447,14 @@ export function PrReviewPanel({
               <div className={`w-full flex items-center justify-center px-3 py-1.5 bg-[var(--bgColor-muted,var(--color-canvas-subtle,#161b22))] border border-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] rounded-md text-sm whitespace-nowrap`}>
                 <span className="text-[var(--fgColor-muted,var(--color-fg-muted,#8b949e))] mr-1.5 text-xs font-semibold uppercase tracking-wide">PR Type:</span>
                 <span className="font-medium text-[var(--fgColor-default,var(--color-fg-default,#c9d1d9))]">{data.pr_type}</span>
+              </div>
+            )}
+            {data.files_truncated && (
+              <div className="flex items-start gap-2 px-3 py-2 bg-[var(--bgColor-attention-muted,rgba(187,128,9,0.15))] border border-[var(--color-attention-fg,#d29922)] rounded-md text-xs">
+                <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5 text-[var(--color-attention-fg,#d29922)]" />
+                <span className={textSecondary}>
+                  This PR changed more files than GitHub returned in one listing - security, architecture, test-coverage and symbol analysis only ran on the files that were fetched, not the full change set.
+                </span>
               </div>
             )}
           </div>

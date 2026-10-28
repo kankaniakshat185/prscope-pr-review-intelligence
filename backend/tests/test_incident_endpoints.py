@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from app.services.incident_similarity import get_chroma_client
@@ -49,6 +51,16 @@ def test_report_incident_attributes_the_reporting_user(client, mock_token, clean
     assert body["reported_by"] == "dev_reviewer"  # the mock login's username
 
 
+def test_list_incidents_rejects_without_verified_repo_access(client, mock_token):
+    with patch("app.api.endpoints.verify_repo_access", new=AsyncMock(return_value=False)):
+        r = client.get(
+            "/api/analysis/incidents",
+            headers={"Authorization": f"Bearer {mock_token}", "X-Github-Token": "fake-pat"},
+            params={"repository": "o/r"},
+        )
+    assert r.status_code == 403
+
+
 def test_reported_incident_shows_up_in_the_team_list(client, mock_token, cleanup_incident_ids):
     repository = "acme/incident-endpoint-list-test"
     r = client.post(
@@ -59,11 +71,12 @@ def test_reported_incident_shows_up_in_the_team_list(client, mock_token, cleanup
     incident_id = r.json()["incident_id"]
     cleanup_incident_ids.append(incident_id)
 
-    r_list = client.get(
-        "/api/analysis/incidents",
-        headers={"Authorization": f"Bearer {mock_token}"},
-        params={"repository": repository},
-    )
+    with patch("app.api.endpoints.verify_repo_access", new=AsyncMock(return_value=True)):
+        r_list = client.get(
+            "/api/analysis/incidents",
+            headers={"Authorization": f"Bearer {mock_token}", "X-Github-Token": "fake-pat"},
+            params={"repository": repository},
+        )
     assert r_list.status_code == 200
     ids = {i["incident_id"] for i in r_list.json()}
     assert incident_id in ids

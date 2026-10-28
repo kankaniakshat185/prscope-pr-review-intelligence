@@ -69,11 +69,14 @@ graph TD
 
 - **Login required.** Every analysis request and workspace operation requires a valid GitHub-issued session (JWT bearer token) — there is no anonymous access to `/analyze`.
 - **JWT signing key is mandatory.** `JWT_SECRET` has no default and no fallback; the backend refuses to start without it. Rotate it and every existing session is invalidated.
+- **OAuth login uses a signed `state` value.** The login redirect embeds a short-lived, signed nonce (also carrying the requesting origin, validated against `ALLOWED_ORIGINS`); the callback rejects any request with a missing, forged, or expired `state`, and posts the session token back to that specific origin instead of broadcasting it to `"*"`. Only the `read:user` scope is requested — PRScope never reads or stores your email.
 - **Mock login is dev-only and off by default.** `ENABLE_MOCK_AUTH=true` unlocks a passwordless login path (`code=mock`) that skips GitHub OAuth entirely — never enable this on a deployed instance.
 - **CORS is allow-listed, not wildcard.** Only the origins in `ALLOWED_ORIGINS` (the published extension ID + any local dev origins you add) can call the API.
 - **Webhooks are signature-verified.** `GITHUB_WEBHOOK_SECRET` must be set and must match the secret configured on the GitHub webhook, or every event is rejected.
 - **BYOK keys are stored, not encrypted.** Gemini/OpenAI/Groq keys and your GitHub PAT live in the extension's local storage in plaintext. Use scoped, minimally-privileged tokens.
-- **Team-shared saved reviews require a verified GitHub permission check.** Viewing another user's saved review for a repository requires a live GitHub API check (via your own PAT) proving real access to that repo — not merely having used PRScope on it before. See Team Collaboration above.
+- **Team-shared saved reviews and team incidents require a verified GitHub permission check.** Viewing another user's saved review, or a repository's team-reported incidents, requires a live GitHub API check (via your own PAT) proving real access to that repo — not merely having used PRScope on it before. See Team Collaboration above.
+- **Reference incidents are global, team-reported incidents are repo-scoped.** Historical-incident matching only ever surfaces the seeded reference dataset plus incidents reported for the PR's own repository — a team's incident never leaks into another repo's matches.
+- **The shared server-side `GITHUB_TOKEN` is an operational trust boundary, not a per-user one.** `/analyze` and `/index/build` use this one token (not a per-caller credential) to read PR/repo content, so any logged-in PRScope user can trigger analysis or a full-repo index build on anything that token can read. If you deploy with a token that has private-repo access, every logged-in user can reach those private repos through your backend — scope the deployed `GITHUB_TOKEN` to public repos only unless that's an intentional, trusted-user-base choice. `/index/build` is additionally rate-limited per user (5 per 5 minutes) independent of the `/analyze` budget, since it walks an entire repo tree.
 
 ## Usage Guide
 

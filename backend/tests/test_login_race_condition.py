@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core import config
 from app.models.pr import SessionLocal, User
+from app.services.auth import create_oauth_state
 
 # Regression coverage for a real production bug: a fresh user's first
 # GitHub login intermittently returned a raw 500 "Internal Server Error"
@@ -90,7 +91,7 @@ def test_login_recovers_cleanly_from_a_concurrent_insert_race(client, monkeypatc
     try:
         with patch("app.api.endpoints.httpx.AsyncClient", return_value=fake_client), \
              patch("sqlalchemy.orm.Session.commit", flaky_commit):
-            r = client.get("/api/analysis/auth/github/callback?code=real-oauth-code-xyz")
+            r = client.get(f"/api/analysis/auth/github/callback?code=real-oauth-code-xyz&state={create_oauth_state('')}")
 
         assert r.status_code == 200
         assert "Authentication successful" in r.text
@@ -133,7 +134,7 @@ def test_login_returns_a_clean_error_if_the_row_is_still_missing_after_recovery(
 
     with patch("app.api.endpoints.httpx.AsyncClient", return_value=fake_client), \
          patch("sqlalchemy.orm.Session.commit", always_raise_on_first_commit):
-        r = client.get("/api/analysis/auth/github/callback?code=real-oauth-code-abc")
+        r = client.get(f"/api/analysis/auth/github/callback?code=real-oauth-code-abc&state={create_oauth_state('')}")
 
     assert r.status_code == 500
     assert "try logging in again" in r.json()["detail"].lower()

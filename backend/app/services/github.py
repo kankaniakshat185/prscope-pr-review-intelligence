@@ -75,10 +75,28 @@ async def fetch_pr_data(repo_url: str, pr_number: int) -> Dict[str, Any]:
         pr_response.raise_for_status()
         pr_info = pr_response.json()
 
-        # Fetch files changed
-        files_response = await client.get(f"{api_base}/pulls/{pr_number}/files", headers=headers)
-        files_response.raise_for_status()
-        files_info = files_response.json()
+        # Fetch files changed, paginated - the endpoint defaults to 30 files
+        # per page, so an unpaginated single request silently truncates any
+        # PR touching more than 30 files while `changed_files` below still
+        # reports the real total. per_page=100 is GitHub's max for this
+        # endpoint; the page-count cap below is a safety bound, not an
+        # expected limit (GitHub itself stops listing files past 3000).
+        files_info: List[Dict[str, Any]] = []
+        page = 1
+        while True:
+            files_response = await client.get(
+                f"{api_base}/pulls/{pr_number}/files",
+                headers=headers,
+                params={"per_page": 100, "page": page},
+            )
+            files_response.raise_for_status()
+            page_files = files_response.json()
+            files_info.extend(page_files)
+            if len(page_files) < 100:
+                break
+            page += 1
+            if page > 30:
+                break
 
         base_sha = pr_info.get("base", {}).get("sha")
         head_sha = pr_info.get("head", {}).get("sha")
@@ -104,6 +122,7 @@ async def fetch_pr_data(repo_url: str, pr_number: int) -> Dict[str, Any]:
         await asyncio.gather(*(_attach_content(f) for f in parseable_files))
 
     # Extract metadata
+    changed_files_count = pr_info.get("changed_files", 0)
     return {
         "owner": owner,
         "repo": repo,
@@ -112,8 +131,13 @@ async def fetch_pr_data(repo_url: str, pr_number: int) -> Dict[str, Any]:
         "description": pr_info.get("body", "") or "",
         "additions": pr_info.get("additions", 0),
         "deletions": pr_info.get("deletions", 0),
-        "changed_files": pr_info.get("changed_files", 0),
+        "changed_files": changed_files_count,
         "files": files_info,
+        # True if the files list above is incomplete relative to the PR's
+        # real file count (e.g. GitHub's own 3000-file cap on this
+        # endpoint) - every file-content-dependent check (security,
+        # architecture, symbols, has_tests) only sees what's in `files`.
+        "files_truncated": len(files_info) < changed_files_count,
         "head_sha": head_sha,
         "base_sha": base_sha,
     }

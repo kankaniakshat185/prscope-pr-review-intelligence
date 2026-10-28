@@ -3,7 +3,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
-from app.services.rate_limiter import RateLimiter, analyze_rate_limiter
+from app.services.rate_limiter import RateLimiter, analyze_rate_limiter, index_build_rate_limiter
 
 
 def test_allows_requests_up_to_the_limit():
@@ -61,3 +61,21 @@ def test_analyze_endpoint_enforces_the_rate_limit(client, mock_token):
         assert "Retry-After" in r.headers
     finally:
         analyze_rate_limiter.max_requests = original_max
+
+
+def test_index_build_endpoint_enforces_its_own_rate_limit(client, mock_token):
+    # Separate budget from analyze_rate_limiter - /index/build uses the
+    # server's own GITHUB_TOKEN to walk a whole repo tree, so it needs its
+    # own cap independent of how many /analyze calls a user has made.
+    original_max = index_build_rate_limiter.max_requests
+    index_build_rate_limiter.max_requests = 0
+    try:
+        r = client.post(
+            "/api/analysis/index/build",
+            headers={"Authorization": f"Bearer {mock_token}"},
+            json={"repo_url": "https://github.com/x/y"},
+        )
+        assert r.status_code == 429
+        assert "Retry-After" in r.headers
+    finally:
+        index_build_rate_limiter.max_requests = original_max

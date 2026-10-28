@@ -6,7 +6,7 @@ PRScope is built as a developer tool designed with privacy in mind. This privacy
 
 ## 1. Information We Collect
 When you use the PRScope Chrome Extension, we handle the following data:
-*   **Authentication Information:** Logging in via GitHub OAuth is required to run any pull request analysis. On login, we store your GitHub profile identifier, username, and avatar URL to maintain your session and, if you use it, your "Saved Reviews" workspace. We do not access or store your real email address, even though the GitHub OAuth consent screen currently requests email read access.
+*   **Authentication Information:** Logging in via GitHub OAuth is required to run any pull request analysis. On login, we store your GitHub profile identifier, username, and avatar URL to maintain your session and, if you use it, your "Saved Reviews" workspace. We request only the `read:user` OAuth scope and do not request or store your email address.
 *   **API Keys and Tokens (BYOK):** If you provide your own Gemini, OpenAI, or Groq API key, or a GitHub Personal Access Token (used to post review comments on your behalf, publish commit statuses, and verify repository access for the Team Reviews feature described below), these are stored **locally in your browser only, in plaintext (not encrypted)**, and sent only to our backend as part of your own requests. We do not have server-side access to these values outside of the request you initiate.
 *   **Website Content:** To generate pull request reviews, the extension reads the text, diffs, and structure of the GitHub Pull Request you are currently viewing.
 

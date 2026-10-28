@@ -23,10 +23,10 @@ from app.services.architecture import validate_architecture
 from app.services.incident_similarity import find_similar_incidents, add_team_incident, list_team_incidents
 from app.services.security_engine import analyze_security
 from app.services.dependency_engine import build_dependency_graph
-from app.services.complexity_engine import compute_function_complexities
+from app.services.complexity_engine import compute_function_complexities, compute_function_complexities_from_source
 from app.services.reviewability_engine import calculate_reviewability
-from app.services.auth import create_access_token, verify_token
-from app.services.rate_limiter import rate_limited_user
+from app.services.auth import create_access_token, verify_token, create_oauth_state, verify_oauth_state
+from app.services.rate_limiter import rate_limited_user, rate_limited_index_build_user
 from app.services.webhook_debouncer import WebhookDebouncer
 from app.services.repo_index_engine import build_or_update_index, enrich_with_repo_wide_blast_radius
 from app.core.config import settings
@@ -39,16 +39,23 @@ import hmac
 
 router = APIRouter()
 
-# Gap between successive LLM calls within one analysis. A single analysis
-# makes several calls back-to-back (one per security finding, plus checklist/
-# comments/summary/jira); spacing them out reduces the odds of tripping a
-# free-tier per-minute quota, at the cost of a slower (but reliable) analysis.
+# Gap between the two LLM calls a single /analyze/enrich call makes (the
+# batched security-finding explanation call, then generate_review_bundle) -
+# spacing them out reduces the odds of tripping a free-tier per-minute
+# quota, at the cost of a slightly slower (but reliable) enrichment.
 LLM_CALL_SPACING_SECONDS = 5
 
 # security_engine.analyze_security has no cap on how many findings it can
 # return; without a limit here, a messy PR could trigger dozens of AI-
 # explanation calls and blow well past any reasonable analysis time budget.
 MAX_AI_EXPLAINED_FINDINGS = 10
+
+# Same parsing as main.py's CORS allow_origins - duplicated rather than
+# imported from there to avoid a circular import (main.py imports this
+# module's router). Used to validate the Origin header on the OAuth login
+# request before trusting it as a postMessage target on the callback.
+_ALLOWED_ORIGINS = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
+
 
 def get_db():
     db = SessionLocal()
@@ -62,7 +69,7 @@ def get_db():
 # ==================================================
 
 @router.get("/auth/github/login")
-def github_login():
+def github_login(origin: Optional[str] = Header(None)):
     if not settings.GITHUB_CLIENT_ID:
         if settings.ENABLE_MOCK_AUTH:
             return {"url": "http://localhost:8000/api/analysis/auth/github/callback?code=mock"}
@@ -72,11 +79,19 @@ def github_login():
                    "For local development without a GitHub OAuth app, set ENABLE_MOCK_AUTH=true."
         )
 
-    redirect_uri = f"https://github.com/login/oauth/authorize?client_id={settings.GITHUB_CLIENT_ID}&scope=read:user user:email"
+    # Only embed the origin if it's one we actually trust - the callback
+    # falls back to a broadcast postMessage ("*") rather than targeting an
+    # unrecognized origin.
+    trusted_origin = origin if origin in _ALLOWED_ORIGINS else ""
+    state = create_oauth_state(trusted_origin)
+    redirect_uri = (
+        f"https://github.com/login/oauth/authorize?client_id={settings.GITHUB_CLIENT_ID}"
+        f"&scope=read:user&state={state}"
+    )
     return {"url": redirect_uri}
 
 @router.get("/auth/github/callback")
-async def github_callback(code: str, db: Session = Depends(get_db)):
+async def github_callback(code: str, state: Optional[str] = None, db: Session = Depends(get_db)):
     if code == "mock":
         if not settings.ENABLE_MOCK_AUTH:
             raise HTTPException(status_code=403, detail="Mock authentication is disabled.")
@@ -84,7 +99,13 @@ async def github_callback(code: str, db: Session = Depends(get_db)):
         username = "dev_reviewer"
         avatar_url = "https://github.com/ghost.png"
     else:
-        # Real OAuth Flow
+        # Real OAuth Flow - state is required and must be a value this
+        # backend itself issued (CSRF protection on the callback; also
+        # carries the trusted origin to target the postMessage below).
+        if not state:
+            raise HTTPException(status_code=400, detail="Missing OAuth state. Please try logging in again.")
+        target_origin = verify_oauth_state(state) or "*"
+
         async with httpx.AsyncClient() as client:
             # 1. Exchange code for access token
             client_id_val = settings.GITHUB_CLIENT_ID.strip() if settings.GITHUB_CLIENT_ID else ""
@@ -133,7 +154,6 @@ async def github_callback(code: str, db: Session = Depends(get_db)):
             github_id=github_id,
             username=username,
             avatar_url=avatar_url,
-            email=(username or github_id) + "@github.com"
         )
         db.add(user)
         try:
@@ -164,7 +184,10 @@ async def github_callback(code: str, db: Session = Depends(get_db)):
     if code == "mock":
         return {"access_token": token, "token_type": "bearer", "user": user_payload}
         
-    # 5. Return HTML to postMessage back to the extension
+    # 5. Return HTML to postMessage back to the extension - targeted at the
+    # origin that started this login (verified above via `state`), not a
+    # "*" broadcast, so the session token can't be read by an unrelated
+    # page that happened to be window.opener.
     html_content = f"""
     <html>
         <body>
@@ -172,7 +195,7 @@ async def github_callback(code: str, db: Session = Depends(get_db)):
                 window.opener.postMessage({{
                     "access_token": "{token}",
                     "user": {json.dumps(user_payload)}
-                }}, "*");
+                }}, {json.dumps(target_origin)});
                 window.close();
             </script>
             <p>Authentication successful! You can close this window.</p>
@@ -208,13 +231,24 @@ async def _run_deterministic_pipeline(pr_data: Dict[str, Any], custom_rules_yaml
 
     symbols = analyze_symbols(pr_data)
 
-    # Cyclomatic complexity (Python files only - same diff-fragment
-    # limitation as symbol extraction and dependency graph construction)
+    # Cyclomatic complexity (Python files only), computed from each file's
+    # real head_content when available (same "real content over diff
+    # reconstruction" pattern as symbol extraction and dependency graph
+    # construction), restricted to functions this PR actually touched.
+    touched_functions = set(symbols.get("functions_modified", [])) | set(symbols.get("functions_added", []))
     complexity_data: Dict[str, int] = {}
     for changed_file in pr_data.get('files', []):
-        if changed_file.get('filename', '').endswith('.py'):
-            for fn_name, complexity in compute_function_complexities(changed_file.get('patch', '')).items():
-                complexity_data[fn_name] = max(complexity_data.get(fn_name, 0), complexity)
+        if not changed_file.get('filename', '').endswith('.py'):
+            continue
+        head_content = changed_file.get('head_content')
+        if head_content is not None:
+            file_complexities = compute_function_complexities_from_source(head_content)
+        else:
+            file_complexities = compute_function_complexities(changed_file.get('patch', ''))
+        for fn_name, complexity in file_complexities.items():
+            if fn_name not in touched_functions:
+                continue
+            complexity_data[fn_name] = max(complexity_data.get(fn_name, 0), complexity)
 
     # Dependency Intelligence (Call Graph & Impact)
     dependency_graph = build_dependency_graph(pr_data.get('files', []), symbols)
@@ -309,7 +343,8 @@ async def analyze_pr(request: PRAnalysisRequest, user_id: int = Depends(rate_lim
             pr_type=result["pr_type"],
             reviewability=result["reviewability"],
             pr_title=pr_data.get('title', ''),
-            has_tests=result["has_tests"]
+            has_tests=result["has_tests"],
+            files_truncated=pr_data.get("files_truncated", False)
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -387,7 +422,7 @@ def _parse_owner_repo(repo_url: str) -> tuple:
 
 
 @router.post("/index/build")
-async def trigger_repo_index_build(request: RepoIndexRequest, user_id: int = Depends(verify_token)):
+async def trigger_repo_index_build(request: RepoIndexRequest, user_id: int = Depends(rate_limited_index_build_user)):
     """
     Kicks off a full-repo index build (or incremental refresh) in the
     background and returns immediately - a first build can take a while
@@ -459,7 +494,20 @@ def report_incident(payload: IncidentCreate, user_id: int = Depends(verify_token
 
 
 @router.get("/incidents", response_model=list[IncidentResponse])
-def get_team_incidents(repository: str, user_id: int = Depends(verify_token)):
+async def get_team_incidents(
+    repository: str,
+    user_id: int = Depends(verify_token),
+    x_github_token: Optional[str] = Header(None),
+):
+    """Gated the same way as team-shared saved reviews (_has_team_access):
+    a repository's team-reported incidents are internal detail about that
+    repo, not something any logged-in PRScope user should be able to read
+    just by knowing the repo's name."""
+    if not await _has_team_access(repository, x_github_token):
+        raise HTTPException(
+            status_code=403,
+            detail="Viewing team incidents requires a GitHub Personal Access Token with access to this repository. Add one in Settings.",
+        )
     return list_team_incidents(repository)
 
 

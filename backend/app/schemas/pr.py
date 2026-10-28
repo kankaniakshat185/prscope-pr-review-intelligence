@@ -27,6 +27,7 @@ class PRDeterministicResponse(BaseModel):
     reviewability: Optional[Dict[str, Any]] = None
     pr_title: Optional[str] = None
     has_tests: bool = False
+    files_truncated: bool = False
 
 
 class PREnrichmentResponse(BaseModel):
